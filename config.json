@@ -1,0 +1,42 @@
+{
+  "api": {
+    "base_url": "https://api.sofascore.com/",
+    "endpoints": {
+      "countries": "api/v1/sport/football/categories",
+      "tournaments": "api/v1/category/{}/unique-tournaments",
+      "tournament_detail": "api/v1/unique-tournament/{}",
+      "seasons": "api/v1/unique-tournament/{}/seasons",
+
+      "scheduled": "api/v1/sport/football/scheduled-events/",
+	  "matches": "api/v1/event/{}",
+      "team": "api/v1/team/{}",
+      "players": "api/v1/team/{}/players",
+
+      "standings": "api/v1/unique-tournament/{}/season/{}/standings/total",
+
+      "pregame_form": "api/v1/event/{}/pregame-form",
+      "team_streaks": "api/v1/event/{}/team-streaks",
+	  "lineups": "api/v1/event/{}/lineups",
+
+      "live_matches": "api/v1/sport/football/events/live",
+      "incidents": "api/v1/event/{}/incidents",
+
+
+      "next": "api/v1/unique-tournament/{}/season/{}/events/next/0",
+      "last": "api/v1/unique-tournament/{}/season/{}/events/last/0",
+      "match_stats": "api/v1/event/{}/statistics",
+      "odds": "api/v1/event/{}/odds/1/all",
+      "current_round": "api/v1/unique-tournament/{}/season/{}/rounds",
+	  "rounds": "api/v1/unique-tournament/{}/season/{}/events/round/{}",
+	  "groups": "api/v1/unique-tournament/{}/season/{}/groups"
+    }
+  },
+  "headers": {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+  },
+  "database": {
+    "DB_HOST": "35.195.138.156",
+    "DB_USER": "betadmin",
+    "DB_NAME": "betalert"
+  }
+}
