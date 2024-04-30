@@ -1,10 +1,14 @@
 @echo off
+SET PROJECT_ID=innate-empire-422116-u4
 SET FUNCTION_NAME=countries
 SET TRIGGER_TYPE=--trigger-http
-SET RUNTIME=python39
-SET ENTRY_POINT=main_countries
+SET RUNTIME=python312
+SET ENTRY_POINT=countries_main
 SET REGION=europe-west1
-SET SOURCE_PATH=D:\TugaIntel\BetAlert_Cloud\scripts
+SET SOURCE_PATH=D:\TugaIntel\BetAlert_Cloud\functions
+SET ENV_VARS=INSTANCE_CONNECTION_NAME=innate-empire-422116-u4:europe-west1:betalert,DB_USER=betadmin,DB_PASS=Welcome!123,DB_NAME=ScoreAlert,PRIVATE_IP=false
 
-REM Deploy the function
-gcloud functions deploy %FUNCTION_NAME% --runtime %RUNTIME% %TRIGGER_TYPE% --entry-point %ENTRY_POINT% --source %SOURCE_PATH% --region %REGION%
+REM Deploy the function using gcloud
+gcloud functions deploy %FUNCTION_NAME% --project %PROJECT_ID% --runtime %RUNTIME% %TRIGGER_TYPE% --entry-point=%ENTRY_POINT% --source=%SOURCE_PATH%\%FUNCTION_NAME% --region=%REGION% --no-gen2 --set-env-vars=%ENV_VARS%
+
+
