@@ -23,7 +23,7 @@ def fetch_seasons_db(cursor):
 
 
 def fetch_fixtures_db(cursor):
-    cursor.execute("SELECT id, match_time, match_status FROM matches WHERE match_status!='finished  '")
+    cursor.execute("SELECT id, match_time, match_status FROM matches WHERE match_status!='finished'")
     existing = {row[0]: {"match_time": row[1], "match_status": row[2]} for row in cursor.fetchall()}
     logging.debug(f"Fetched existing fixtures: {existing}")
     return existing
