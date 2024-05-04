@@ -21,10 +21,10 @@ def get_distinct_teams(cursor):
         list of int: A list containing unique team IDs.
     """
     query = """SELECT DISTINCT home_team_id FROM matches 
-        WHERE match_time between NOW() AND NOW() + INTERVAL 1 DAY
+        WHERE match_time between NOW() AND NOW() + INTERVAL 245 MINUTE
         UNION 
         SELECT DISTINCT away_team_id FROM matches 
-        WHERE match_time between NOW() AND NOW() + INTERVAL 1 DAY
+        WHERE match_time between NOW() AND NOW() + INTERVAL 245 MINUTE
         """
     cursor.execute(query)
     return [row[0] for row in cursor.fetchall()]
@@ -171,7 +171,6 @@ def update_team_reputation(cursor, conn):
 def teams_main(request):
     """ Main function to update team details in the database. """
     start_time = time.time()
-
     logging.info("Teams function execution started.")
 
     engine = get_db_connection()  # This is an SQLAlchemy engine now
@@ -185,18 +184,24 @@ def teams_main(request):
         updated_count = 0
         integrity_error_count = 0
 
-        # Fetch distinct teams from standings
+        # Fetch distinct teams from fixtures
+        start_get_distinct_teams = time.time()
         team_ids = get_distinct_teams(cursor)
+        logging.info(f"get_distinct_teams execution time: {time.time() - start_get_distinct_teams:.4f} seconds")
 
         # Fetch existing team details from database
+        start_get_teams_details = time.time()
         existing_teams = get_teams_details(cursor)
+        logging.info(f"start_get_teams_details execution time: {time.time() - start_get_teams_details:.4f} seconds")
 
         for team_id in team_ids:
+
             team_data = fetch_team_details(team_id)
             parsed_data = parse_team_details(team_data)
 
             # Check if the team exists and if there are any changes
             if team_id in existing_teams:
+
                 existing_data = existing_teams[team_id]
                 needs_update = False
                 difference_log = []  # For logging differences
