@@ -23,7 +23,7 @@ def get_recent_matches(cursor):
     query = """
         SELECT DISTINCT tournament_id, season_id
         FROM matches
-        WHERE match_status = 'finished' AND match_time >= NOW() - INTERVAL 12 HOUR
+        WHERE match_status = 'finished' AND match_time >= NOW() - INTERVAL 5 HOUR
     """
     cursor.execute(query)
     return cursor.fetchall()
