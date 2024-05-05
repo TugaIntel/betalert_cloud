@@ -22,10 +22,10 @@ def get_teams(cursor):
     """
     cursor.execute("""
         SELECT DISTINCT home_team_id FROM matches 
-        WHERE match_time between NOW() AND NOW() + INTERVAL 1 DAY
+        WHERE match_time between NOW() AND NOW() + INTERVAL 245 MINUTE
         UNION 
         SELECT DISTINCT away_team_id FROM matches 
-        WHERE match_time between NOW() AND NOW() + INTERVAL 1 DAY
+        WHERE match_time between NOW() AND NOW() + INTERVAL 245 MINUTE
     """)
     return [row[0] for row in cursor.fetchall()]
 
