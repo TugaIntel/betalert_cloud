@@ -2,6 +2,7 @@
 import time
 import json
 import logging
+import pytz
 import urllib.request
 import google.cloud.logging
 from datetime import datetime, timezone, timedelta
@@ -18,7 +19,14 @@ config = load_config()
 
 
 def fetch_seasons_db(cursor):
-    cursor.execute("SELECT id, tournament_id FROM seasons")
+    cursor.execute("""SELECT DISTINCT s.id, s.tournament_id
+                    FROM  tournaments t
+                    JOIN countries c ON c.id=t.country_id
+                    JOIN seasons s ON s.tournament_id=t.id 
+                    WHERE ((reputation_tier ='bottom' AND tier =99 AND user_count > 1000)
+                    OR (t.name LIKE '%Women%')
+                    OR (reputation_tier ='bottom' AND tier <=3)
+                    OR reputation_tier != 'bottom')""")
     return {row[0]: {"tournament_id": row[1]} for row in cursor.fetchall()}
 
 
@@ -101,7 +109,7 @@ def delete_matches(cursor, conn):
 def fixtures_main(request):
     start_time = time.time()
 
-    logging.info("Players function execution started.")
+    logging.info("Fixtures function execution started.")
 
     engine = get_db_connection()  # This is an SQLAlchemy engine now
     conn = engine.raw_connection()  # Gets a raw connection from the engine
@@ -124,39 +132,44 @@ def fixtures_main(request):
             # Fetch new fixtures data from the API for the current date + 2 days
             fixtures_from_api = fetch_fixtures_api(tournament_id, season_id)
 
-            cest = timezone(timedelta(hours=2))
+            # Get the current time in UTC and convert to CEST
+            cest = pytz.timezone('Europe/Berlin')
+            # Get the current time in UTC, then convert it to CEST
+            today = datetime.now(pytz.utc).astimezone(cest)
+            delta = today + timedelta(days=1)
 
             for fixtures_data in fixtures_from_api:
-
                 timestamp_data = fixtures_data['startTimestamp']
-                utc_time_data = datetime.fromtimestamp(timestamp_data, tz=timezone.utc)
+                utc_time_data = datetime.fromtimestamp(timestamp_data, tz=pytz.utc)
                 cest_time_data = utc_time_data.astimezone(cest)
-                formatted_time_data = cest_time_data.strftime('%Y-%m-%d %H:%M:%S')
-                match_data = (
-                    fixtures_data['id'],
-                    fixtures_data['homeTeam']['id'],
-                    fixtures_data['awayTeam']['id'],
-                    fixtures_data['tournament']['uniqueTournament']['id'],  # Updated to reflect new JSON structure
-                    fixtures_data.get('roundInfo', {}).get('round', 0),
-                    formatted_time_data,
-                    fixtures_data.get('homeScore', {}).get('aggregated', None),  # Adjusted for new score field
-                    fixtures_data.get('awayScore', {}).get('aggregated', None),  # Adjusted for new score field
-                    fixtures_data['status']['type'],
-                    fixtures_data['season']['id']
-                )
 
-                logging.debug(f"Prepared match data: {match_data}")
-                if match_data[0] not in existing_fixtures:
-                    insert_match(cursor, conn, match_data)
-                    inserted_count += 1
-                else:
-                    db_match_data = existing_fixtures[fixtures_data['id']]
-                    if (db_match_data['match_time'] != formatted_time_data or
-                            db_match_data['match_status'] != fixtures_data['status']['type']):
-                        update_match_data = (formatted_time_data, match_data[6], match_data[7],
-                                             match_data[8], match_data[0])
-                        update_match(cursor, conn, update_match_data)
-                        updated_count += 1
+                if cest_time_data < delta:
+                    formatted_time_data = cest_time_data.strftime('%Y-%m-%d %H:%M:%S')
+                    match_data = (
+                        fixtures_data['id'],
+                        fixtures_data['homeTeam']['id'],
+                        fixtures_data['awayTeam']['id'],
+                        fixtures_data['tournament']['uniqueTournament']['id'],  # Updated to reflect new JSON structure
+                        fixtures_data.get('roundInfo', {}).get('round', 0),
+                        formatted_time_data,
+                        fixtures_data.get('homeScore', {}).get('aggregated', None),  # Adjusted for new score field
+                        fixtures_data.get('awayScore', {}).get('aggregated', None),  # Adjusted for new score field
+                        fixtures_data['status']['type'],
+                        fixtures_data['season']['id']
+                    )
+
+                    logging.debug(f"Prepared match data: {match_data}")
+                    if match_data[0] not in existing_fixtures:
+                        insert_match(cursor, conn, match_data)
+                        inserted_count += 1
+                    else:
+                        db_match_data = existing_fixtures[fixtures_data['id']]
+                        if (db_match_data['match_time'] != formatted_time_data or
+                                db_match_data['match_status'] != fixtures_data['status']['type']):
+                            update_match_data = (formatted_time_data, match_data[6], match_data[7], match_data[8],
+                                                 match_data[0])
+                            update_match(cursor, conn, update_match_data)
+                            updated_count += 1
 
         delete_matches(cursor, conn)
 
