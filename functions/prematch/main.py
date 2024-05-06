@@ -2,6 +2,8 @@
 import time
 import logging
 import google.cloud.logging
+import pytz
+from datetime import datetime, timedelta
 from utils import get_db_connection, send_alert
 from config_loader import load_config
 
@@ -14,20 +16,34 @@ config = load_config()
 
 
 def fetch_pre_match_info(cursor):
-    # Query to fetch matches that will start in the next two hours from v_pre_match_analysis view
-    query = """
-        SELECT label, DATE_FORMAT(match_time, '%H:%i') AS match_time, country, tournament, 
-               home, away, h_squad_m, a_squad_m, squad_ratio, score_ratio, conceded_ratio, 
-               h_lineup_m, a_lineup_m, home_pos, away_pos, round_number
-        FROM v_pre_match_analysis
-        WHERE match_time BETWEEN NOW() + INTERVAL 25 MINUTE AND NOW() + INTERVAL 100 MINUTE
-          AND label IS NOT NULL
-          AND ((reputation_tier ='bottom' AND tier =99 AND user_count > 1000)
-                    OR (tournament LIKE '%Women%')
-                    OR (reputation_tier ='bottom' AND tier <=3)
-                    OR reputation_tier != 'bottom')
-        ORDER BY match_time, tournament_reputation DESC
+    """Fetches upcoming matches within a time window, considering time zone."""
+
+    cest = pytz.timezone('Europe/Berlin')
+    # Adjust time window based on your needs (replace with desired offsets)
+    offset_start = timedelta(minutes=25)
+    offset_end = timedelta(minutes=100)
+
+    # Fetch current UTC time and convert to desired time zone
+    now_utc = datetime.now(pytz.utc)
+    now_local = now_utc.astimezone(cest)
+    # Construct the query with time window adjusted to desired time zone
+    start_time = (now_local + offset_start).strftime('%Y-%m-%d %H:%M:%S')
+    end_time = (now_local + offset_end).strftime('%Y-%m-%d %H:%M:%S')
+
+    query = f"""
+    SELECT label, DATE_FORMAT(match_time, '%H:%i') AS match_time, country, tournament, 
+           home, away, h_squad_m, a_squad_m, squad_ratio, score_ratio, conceded_ratio, 
+           h_lineup_m, a_lineup_m, home_pos, away_pos, round_number
+    FROM v_pre_match_analysis
+    WHERE match_time BETWEEN '{start_time}' AND '{end_time}'
+      AND label IS NOT NULL
+      AND ((reputation_tier ='bottom' AND tier =99 AND user_count > 1000)
+                OR (tournament LIKE '%Women%')
+                OR (reputation_tier ='bottom' AND tier <=3)
+                OR reputation_tier != 'bottom')
+    ORDER BY match_time, tournament_reputation DESC
     """
+
     cursor.execute(query)
     return cursor.fetchall()
 
