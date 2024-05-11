@@ -162,3 +162,4 @@ cython_debug/
 betalert-417323-3cbb71519ed9.json
 /betalert/betalert/__init__.py
 /betalert/matches/__init__.py
+/betalert/matches/migrations/__init__.py
