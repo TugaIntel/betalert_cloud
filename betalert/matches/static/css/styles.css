@@ -1,0 +1,45 @@
+/* Main Stylesheet */
+@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap'); /* Importing Roboto font */
+
+:root {
+    --primary-green: #32ba39; /* New lighter green */
+    --text-color: #FFFFFF; /* Keeping text white for good contrast */
+}
+
+.header {
+    background-color: var(--primary-green);
+    padding: 10px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.nav-links a {
+    color: var(--text-color);
+    font-size: 18px; /* Larger font size */
+    font-weight: bold; /* Bolder text for better readability */
+    margin: 0 15px;
+    text-decoration: none; /* Removes underline */
+}
+
+.nav-links a:hover {
+    text-decoration: underline; /* Adds underline on hover for better interactivity */
+}
+
+body {
+    background-color: var(--primary-green);
+    color: #FFFFFF;
+}
+
+.button, .btn {
+    background-color: var(--primary-green);
+    color: var(--text-color);
+    border: none;
+    padding: 10px 20px;
+    text-transform: uppercase; /* Stylistic choice: makes buttons text uppercase */
+    border-radius: 4px; /* Rounded corners for buttons */
+}
+
+.button:hover, .btn:hover {
+    background-color: darken(var(--primary-green), 10%); /* Darkens the button on hover */
+}

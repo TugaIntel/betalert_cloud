@@ -9,7 +9,7 @@ https://docs.djangoproject.com/en/5.0/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.0/ref/settings/
 """
-
+import os
 from pathlib import Path
 from google.cloud import secretmanager
 
@@ -35,6 +35,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'matches',
 ]
 
 MIDDLEWARE = [
@@ -71,29 +72,32 @@ WSGI_APPLICATION = 'betalert.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.0/ref/settings/#databases
 
-def access_secret_version(project_id, secret_id, version_id="latest"):
-    """
-    Access a secret version in Google Cloud Secret Manager.
-    """
-    client = secretmanager.SecretManagerServiceClient()
-    name = f"projects/{project_id}/secrets/{secret_id}/versions/{version_id}"
+def get_secret_client():
+    """Retrieves a Secret Manager client instance."""
+    return secretmanager.SecretManagerServiceClient()
+
+
+def get_secret(secret_name):
+    """Retrieves a secret value from Secret Manager."""
+    client = get_secret_client()
+    name = f"projects/{PROJECT_ID}/secrets/{secret_name}/versions/latest"
     response = client.access_secret_version(request={"name": name})
     return response.payload.data.decode("UTF-8")
 
 
-# Usage
-SECRET_KEY = access_secret_version('118521065411', 'DJANGO_SECRET_KEY')
+PROJECT_ID = 'innate-empire-422116-u4'
+SECRET_KEY = get_secret("DJANGO_SECRET_KEY")
+
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
-        'NAME': 'betalert',
+        'NAME': 'BetAlert',
         'USER': 'betadmin',
-        'PASSWORD': access_secret_version('118521065411', 'DB_PASSWORD'),
-        'HOST': '35.195.138.156',  # You might want to use an environment variable for this as well
+        'PASSWORD': get_secret("DB_PASS"),
+        'HOST': '34.140.219.88',
         'PORT': '3306',
     }
 }
-
 
 # Password validation
 # https://docs.djangoproject.com/en/5.0/ref/settings/#auth-password-validators
@@ -129,7 +133,12 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.0/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
+
+# Optional: specify where Django collects static files from all apps
+STATICFILES_DIRS = [
+    os.path.join(BASE_DIR, 'static'),
+]
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.0/ref/settings/#default-auto-field

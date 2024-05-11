@@ -1,0 +1,51 @@
+    {% load static %}
+
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>Upcoming Matches</title>
+        <!-- Include Bootstrap CSS for styling -->
+        <link href="https://maxcdn.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" rel="stylesheet">
+        <link rel="stylesheet" href="{% static 'css/styles.css' %}">
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <a href="/">
+                    <img src="{% static 'images/betalert_logo.png' %}" alt="Bet Alert Logo" style="height: 100px;">
+                </a>
+            <div class="nav-links">
+                <a href="#fixtures">Fixtures</a>
+                <a href="#alerts">Alerts</a>
+            </div>
+            <div>
+                <a href="#login">Login/Register</a>
+             </div>
+        </div>
+            <h1>Upcoming Matches</h1>
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Match Time</th>
+                        <th>Country</th>
+                        <th>Tournament</th>
+                        <th>Home</th>
+                        <th>Away</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for match in matches %}
+                    <tr>
+                        <td>{{ match.match_time }}</td>
+                        <td>{{ match.country }}</td>
+                        <td>{{ match.tournament }}</td>
+                        <td>{{ match.home }}</td>
+                        <td>{{ match.away }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </body>
+    </html>
