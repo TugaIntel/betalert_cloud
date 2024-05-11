@@ -49,7 +49,11 @@ def fetch_pre_match_info(cursor):
 
 
 def construct_alert_message(matches):
-    message = "Upcoming Matches:\n\n"
+    """Constructs a list of messages with each message adhering to the character limit imposed by Telegram."""
+    max_message_length = 4000  # Set close to Telegram's limit
+    messages = []
+    current_message = "Upcoming Matches:\n\n"
+
     for row in matches:
         (label, match_time, country, tournament, home, away, h_squad_m, a_squad_m, squad_ratio, score_ratio,
          conceded_ratio, h_lineup_m, a_lineup_m, home_pos, away_pos, round_number) = row
@@ -61,12 +65,23 @@ def construct_alert_message(matches):
         home_concede_char = conceded_ratio[0] if conceded_ratio else ''
         away_concede_char = conceded_ratio[1] if conceded_ratio else ''
 
-        message += f"{label} in {country} {tournament} - {match_time}\n"
-        message += f"Round {round_number}: {home}({home_pos}) vs {away}({away_pos})\n"
-        message += f"Goal Ratio: {home_score_char}/{home_concede_char} vs {away_score_char}/{away_concede_char}\n"
-        message += f"Values: {home_value} vs {away_value} (Ratio: {squad_ratio})\n\n"
+        addition = (f"{label} in {country} {tournament} - {match_time}\n"
+                    f"Round {round_number}: {home}({home_pos}) vs {away}({away_pos})\n"
+                    f"Goal Ratio: {home_score_char}/{home_concede_char} vs {away_score_char}/{away_concede_char}\n"
+                    f"Values: {home_value} vs {away_value} (Ratio: {squad_ratio})\n\n")
 
-    return message
+        # Check if adding the next match will exceed the limit
+        if len(current_message) + len(addition) > max_message_length:
+            messages.append(current_message)
+            current_message = "Upcoming Matches:\n\n"  # Start a new message if limit is reached
+
+        current_message += addition
+
+    # Append the last message if it contains any text
+    if current_message:
+        messages.append(current_message)
+
+    return messages
 
 
 def prematch_main(request):
@@ -74,8 +89,8 @@ def prematch_main(request):
     start_time = time.time()
     logging.info("PreMatch function execution started.")
 
-    engine = get_db_connection()  # This is an SQLAlchemy engine now
-    conn = engine.raw_connection()  # Gets a raw connection from the engine
+    engine = get_db_connection()
+    conn = engine.raw_connection()
     cursor = conn.cursor()
 
     try:
@@ -83,9 +98,10 @@ def prematch_main(request):
 
         pre_match_info = fetch_pre_match_info(cursor)
         if pre_match_info:
-            message = construct_alert_message(pre_match_info)
-            send_alert(message)
-            logging.info("Pre-match alert sent.")
+            messages = construct_alert_message(pre_match_info)
+            for message in messages:
+                send_alert(message)
+                logging.info("Pre-match alert sent.")
         else:
             logging.info("No matches to alert.")
 
@@ -94,8 +110,8 @@ def prematch_main(request):
         return f'An error occurred: {str(e)}', 500
 
     finally:
-        cursor.close()  # Ensure the cursor is closed after operations
-        conn.close()  # Ensure the connection is closed after operations
+        cursor.close()
+        conn.close()
 
     logging.info(f"Total execution time: {time.time() - start_time:.4f} seconds")
     return 'Function executed successfully', 200
