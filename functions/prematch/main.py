@@ -39,8 +39,8 @@ def fetch_pre_match_info(cursor):
       AND label IS NOT NULL
       AND ((reputation_tier ='bottom' AND tier =99 AND user_count > 1000)
                 OR (tournament LIKE '%Women%')
-                OR (reputation_tier ='bottom' AND tier <=3 AND user_count > 500)
-                OR reputation_tier != 'bottom')
+                OR (reputation_tier ='bottom' AND tier <=3 AND user_count > 1000)
+                OR (reputation_tier != 'bottom' AND user_count > 1000 ))
     ORDER BY match_time, tournament_reputation DESC
     """
 
