@@ -31,17 +31,16 @@ def fetch_pre_match_info(cursor):
     end_time = (now_local + offset_end).strftime('%Y-%m-%d %H:%M:%S')
 
     query = f"""
-    SELECT label, DATE_FORMAT(match_time, '%H:%i') AS match_time, country, tournament, 
-           home, away, h_squad_m, a_squad_m, squad_ratio, score_ratio, conceded_ratio, 
-           h_lineup_m, a_lineup_m, home_pos, away_pos, round_number
-    FROM v_pre_match_analysis
-    WHERE match_time BETWEEN '{start_time}' AND '{end_time}'
-      AND label IS NOT NULL
-      AND ((reputation_tier ='bottom' AND tier =99 AND user_count > 1000)
-                OR (tournament LIKE '%Women%')
-                OR (reputation_tier ='bottom' AND tier <=3 AND user_count > 1000)
-                OR (reputation_tier != 'bottom' AND user_count > 1000 ))
-    ORDER BY match_time, tournament_reputation DESC
+        SELECT label, DATE_FORMAT(match_time, '%H:%i') AS match_time, country, tournament, 
+               home, away, h_squad_m, a_squad_m, squad_ratio, score_ratio, conceded_ratio, 
+               h_lineup_m, a_lineup_m, home_pos, away_pos, round_number
+        FROM v_pre_match_analysis
+        WHERE match_time BETWEEN '{start_time}' AND '{end_time}'
+          AND label IS NOT NULL
+          AND (( tier = 99 AND user_count > 1000)
+          OR (tournament LIKE '%Women%')
+          OR (reputation_tier in ('top', 'good', 'medium')))
+        ORDER BY match_time, tournament_reputation DESC
     """
 
     cursor.execute(query)
