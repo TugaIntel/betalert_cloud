@@ -1,21 +1,17 @@
 from django.shortcuts import render
 from .models import Match
 from django.utils import timezone
-from datetime import timedelta
+from datetime import datetime
 
 
-def upcoming_matches(request):
-    # Get the current time with timezone support
-    current_time = timezone.now()
+def home(request):
+    current_date = timezone.localdate()
+    start_of_day = datetime.combine(current_date, datetime.min.time(), tzinfo=timezone.get_current_timezone())
+    end_of_day = datetime.combine(current_date, datetime.max.time(), tzinfo=timezone.get_current_timezone())
 
-    # Calculate the time for 'current time minus 3 hours'
-    time_threshold = current_time - timedelta(hours=3)
-
-    # Filter matches that are either in progress or not started and match_time is greater than 'now minus 3 hours'
+    # Fetch the top 25 matches based on user_count where the match is today
     matches = Match.objects.filter(
-        match_time__gt=time_threshold,
-        match_status__in=['in progress', 'notstarted'],
-        reputation_tier__in=['top', 'medium']
-    ).order_by('match_time')  # Ordering by match time to display them chronologically
+        match_time__range=(start_of_day, end_of_day)
+    ).order_by('-user_count')[:50]
 
-    return render(request, 'matches/upcoming_matches.html', {'matches': matches})
+    return render(request, 'matches/home.html', {'matches': matches})

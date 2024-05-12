@@ -6,6 +6,12 @@
     --text-color: #FFFFFF; /* Keeping text white for good contrast */
 }
 
+body {
+    font-family: 'Roboto', sans-serif;
+    background-color: var(--primary-green);
+    color: var(--text-color);
+}
+
 .header {
     background-color: var(--primary-green);
     padding: 10px 20px;
@@ -14,21 +20,16 @@
     align-items: center;
 }
 
-.nav-links a {
-    color: var(--text-color);
-    font-size: 18px; /* Larger font size */
-    font-weight: bold; /* Bolder text for better readability */
+.nav-links a, .nav-links a:hover {
+    font-size: 18px;
+    font-weight: bold;
     margin: 0 15px;
-    text-decoration: none; /* Removes underline */
+    text-decoration: none;
+    color: var(--text-color) !important; /* Override any other link color settings */
 }
 
 .nav-links a:hover {
     text-decoration: underline; /* Adds underline on hover for better interactivity */
-}
-
-body {
-    background-color: var(--primary-green);
-    color: #FFFFFF;
 }
 
 .button, .btn {
@@ -42,4 +43,9 @@ body {
 
 .button:hover, .btn:hover {
     background-color: darken(var(--primary-green), 10%); /* Darkens the button on hover */
+}
+
+.table th, .table td {
+    border-top: none !important; /* Removes the top border from table cells if needed */
+    color: var(--text-color);
 }

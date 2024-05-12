@@ -1,8 +1,6 @@
-# matches/urls.py
-
 from django.urls import path
-from .views import upcoming_matches
+from . import views
 
 urlpatterns = [
-    path('', upcoming_matches, name='upcoming_matches'),
+    path('', views.home, name='home'),  # Root URL
 ]
