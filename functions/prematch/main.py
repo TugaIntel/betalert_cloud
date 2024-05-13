@@ -32,8 +32,8 @@ def fetch_pre_match_info(cursor):
 
     query = f"""
         SELECT label, DATE_FORMAT(match_time, '%H:%i') AS match_time, country, tournament, 
-               home, away, h_squad_m, a_squad_m, squad_ratio, score_ratio, conceded_ratio, 
-               h_lineup_m, a_lineup_m, home_pos, away_pos, round_number
+               home, away, h_squad_k, a_squad_k, squad_ratio, score_ratio, conceded_ratio, 
+               h_lineup_k, a_lineup_k, home_pos, away_pos, round_number
         FROM v_pre_match_analysis
         WHERE match_time BETWEEN '{start_time}' AND '{end_time}'
           AND label IS NOT NULL
@@ -54,11 +54,11 @@ def construct_alert_message(matches):
     current_message = "Upcoming Matches:\n\n"
 
     for row in matches:
-        (label, match_time, country, tournament, home, away, h_squad_m, a_squad_m, squad_ratio, score_ratio,
-         conceded_ratio, h_lineup_m, a_lineup_m, home_pos, away_pos, round_number) = row
+        (label, match_time, country, tournament, home, away, h_squad_k, a_squad_k, squad_ratio, score_ratio,
+         conceded_ratio, h_lineup_k, a_lineup_k, home_pos, away_pos, round_number) = row
 
-        home_value = f"{h_lineup_m}M" if h_lineup_m and h_lineup_m != 0 else f"{h_squad_m}M"
-        away_value = f"{a_lineup_m}M" if a_lineup_m and a_lineup_m != 0 else f"{a_squad_m}M"
+        home_value = f"{h_lineup_k}K" if h_lineup_k and h_lineup_k != 0 else f"{h_squad_k}K"
+        away_value = f"{a_lineup_k}K" if a_lineup_k and a_lineup_k != 0 else f"{a_squad_k}K"
         home_score_char = score_ratio[0] if score_ratio else ''
         away_score_char = score_ratio[1] if score_ratio else ''
         home_concede_char = conceded_ratio[0] if conceded_ratio else ''

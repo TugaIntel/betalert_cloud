@@ -47,9 +47,9 @@ def fetch_live_match_incidents(match_id):
 def fetch_teams_info(cursor, match_id):
     cursor.execute("""
          SELECT minutes, country, tournament, home, away, home_score, away_score, home_pos, away_pos,
-               score_ratio, conceded_ratio, h_squad_m, a_squad_m, squad_ratio,  h_lineup_m, a_squad_m
+               score_ratio, conceded_ratio, h_squad_k, a_squad_k, squad_ratio,  h_lineup_k, a_squad_k
         FROM v_matches_live WHERE match_id = %s
-        AND h_squad_m is not null and a_squad_m is not null 
+        AND h_squad_k is not null and a_squad_k is not null 
     """, (match_id,))
     result = cursor.fetchone()
     if result:
@@ -130,10 +130,10 @@ def process_red_card_alerts(cursor, conn, match_id, incidents):
 
 def construct_alert_message(incident_type, teams_info, incident):
     team_received = "Home team" if incident.get('isHome', False) else "Away team"
-    home_value = f"{teams_info['home']['lineup_value']}M" if teams_info['home']['lineup_value'] \
-        else f"{teams_info['home']['squad_value']}M"
-    away_value = f"{teams_info['away']['lineup_value']}M" if teams_info['away']['lineup_value'] \
-        else f"{teams_info['away']['squad_value']}M"
+    home_value = f"{teams_info['home']['lineup_value']}K" if teams_info['home']['lineup_value'] \
+        else f"{teams_info['home']['squad_value']}K"
+    away_value = f"{teams_info['away']['lineup_value']}K" if teams_info['away']['lineup_value'] \
+        else f"{teams_info['away']['squad_value']}K"
 
     message = (
         f"Alert: {incident_type}\n"
