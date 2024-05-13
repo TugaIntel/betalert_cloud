@@ -33,8 +33,14 @@ def fetch_live_match_incidents(match_id):
     endpoint_template = config['api']['endpoints']['incidents']
     endpoint = endpoint_template.format(match_id)
     response = make_api_call(endpoint)
-    if not response:
+
+    if not response:  # Check if response is None before accessing it
+        logging.error(f"No data returned from API for incidents of match ID: {match_id}")
         return []
+
+    # Safe to assume response is a dict and proceed
+    logging.debug(f"API response for incidents: {response}")
+    logging.debug(f"Incidents data retrieved: {response.get('incidents', [])}")
     return response.get('incidents', [])
 
 
@@ -82,34 +88,44 @@ def process_red_card_alerts(cursor, conn, match_id, incidents):
     now_formatted = now_local.strftime('%Y-%m-%d %H:%M:%S')
     teams_info = fetch_teams_info(cursor, match_id)
     if not teams_info:
+        logging.error(f"No team info available for match ID: {match_id}")
         return
 
     for incident in incidents:
-        if (incident['incidentType'] == 'card' and incident.get('incidentClass') in ['red', 'yellowRed']
-                and incident['time'] < 80):
+        logging.debug(f"Processing incident: {incident}")
+        try:
+            if (incident['incidentType'] == 'card' and incident.get('incidentClass') in ['red', 'yellowRed']
+                    and incident['time'] < 80):
 
-            incident_id = incident['id']
+                incident_id = incident['id']
 
-            try:
-                cursor.execute("SELECT 1 FROM incidents WHERE id = %s AND is_processed = 1", (incident_id,))
+                try:
+                    cursor.execute("SELECT 1 FROM incidents WHERE id = %s AND is_processed = 1", (incident_id,))
 
-                if cursor.fetchone():
-                    continue
+                    if cursor.fetchone():
+                        continue
 
-                cursor.execute(f"""
-                                INSERT INTO incidents (id, is_processed, processed_at)
-                                VALUES (%s, %s, {now_formatted})
-                                ON DUPLICATE KEY UPDATE processed_at = {now_formatted}, is_processed = 1
-                            """, (incident_id, 1))
+                    cursor.execute(f"""
+                                    INSERT INTO incidents (id, is_processed, processed_at)
+                                    VALUES (%s, %s, {now_formatted})
+                                    ON DUPLICATE KEY UPDATE processed_at = {now_formatted}, is_processed = 1
+                                """, (incident_id, 1))
 
-                message = construct_alert_message("Red Card", teams_info, incident)
-                send_alert(message)
-                logging.info(f"Red card alert sent for match ID: {match_id}.")
-                conn.commit()
+                    message = construct_alert_message("Red Card", teams_info, incident)
+                    send_alert(message)
+                    logging.info(f"Red card alert sent for match ID: {match_id}.")
+                    conn.commit()
 
-            except Exception as e:
-                logging.error(f"Failed to insert/update incident for match ID {match_id}. Error: {e}")
-                conn.rollback()
+                except Exception as e:
+                    logging.error(f"Failed to insert/update incident for match ID {match_id}. Error: {e}")
+                    conn.rollback()
+            else:
+                logging.debug(f"Ignored incident: {incident}")
+
+        except AttributeError as e:
+            logging.error(f"Attempted to access get on a NoneType object: {e}")
+            # Handle the error, e.g., by returning a default value or empty data structure
+            return {}
 
 
 def construct_alert_message(incident_type, teams_info, incident):
