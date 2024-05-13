@@ -1,17 +1,22 @@
 from django.shortcuts import render
-from .models import Match
+from datetime import datetime, timedelta
 from django.utils import timezone
-from datetime import datetime
+from .models import Match
 
 
-def home(request):
-    current_date = timezone.localdate()
-    start_of_day = datetime.combine(current_date, datetime.min.time(), tzinfo=timezone.get_current_timezone())
-    end_of_day = datetime.combine(current_date, datetime.max.time(), tzinfo=timezone.get_current_timezone())
+def home(request, day='today'):
+    current_date = timezone.now()
+    if day == 'yesterday':
+        date_to_show = current_date - timedelta(days=1)
+    elif day == 'tomorrow':
+        date_to_show = current_date + timedelta(days=1)
+    else:
+        date_to_show = current_date
 
-    # Fetch the top 25 matches based on user_count where the match is today
+    start_of_day = datetime.combine(date_to_show.date(), datetime.min.time(), tzinfo=timezone.get_current_timezone())
+    end_of_day = datetime.combine(date_to_show.date(), datetime.max.time(), tzinfo=timezone.get_current_timezone())
+
     matches = Match.objects.filter(
         match_time__range=(start_of_day, end_of_day)
     ).order_by('-user_count')[:50]
-
-    return render(request, 'matches/home.html', {'matches': matches})
+    return render(request, 'matches/home.html', {'matches': matches, 'current_day': day})

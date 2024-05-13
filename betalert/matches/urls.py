@@ -1,6 +1,7 @@
 from django.urls import path
-from . import views
+from .views import home
 
 urlpatterns = [
-    path('', views.home, name='home'),  # Root URL
+    path('', home, name='home'),  # Default to today
+    path('matches/<str:day>/', home, name='matches_by_day'),
 ]

@@ -6,7 +6,7 @@
   <meta charset="utf-8">
   <meta content="width=device-width, initial-scale=1.0" name="viewport">
 
-  <title>Bet Alert - Upcoming Matches and Live match alerts</title>
+  <title>Bet Alert - Upcoming Matches and Live Match Alerts</title>
   <meta content="" name="description">
   <meta content="" name="keywords">
 
@@ -22,9 +22,6 @@
   <!-- Vendor CSS Files -->
   <link href="{% static 'assets/vendor/bootstrap/css/bootstrap.min.css' %}" rel="stylesheet">
   <link href="{% static 'assets/vendor/bootstrap-icons/bootstrap-icons.css' %}" rel="stylesheet">
-  <link href="{% static 'assets/vendor/aos/aos.css' %}" rel="stylesheet">
-  <link href="{% static 'assets/vendor/glightbox/css/glightbox.min.css' %}" rel="stylesheet">
-  <link href="{% static 'assets/vendor/swiper/swiper-bundle.min.css' %}" rel="stylesheet">
 
   <!-- Template Main CSS File -->
   <link href="{% static 'assets/css/main.css' %}" rel="stylesheet">
@@ -42,26 +39,32 @@
 <body>
   <!-- Header and other sections go here, use the provided header as a template -->
 
-  <header id="header" class="header d-flex align-items-center">
+<header id="header" class="header d-flex align-items-center">
     <div class="container-fluid container-xl d-flex align-items-center justify-content-between">
-      <a href="{% url 'home' %}" class="logo d-flex align-items-center">
-        <!-- Uncomment below if you want to use an image logo -->
-        <img src="{% static 'images/betalert_logo.png' %}" alt="Bet Alert Logo">
-        <!-- <h1>Bet Alert<span>.</span></h1> -->
-      </a>
-      <nav id="navbar" class="navbar">
-        <ul>
-          <li><a href="#hero">Home</a></li>
-          <li><a href="#fixtures">Fixtures</a></li>
-          <li><a href="#alerts">Alerts</a></li>
-          <li><a href="#contact">Contact</a></li>
-        </ul>
-      </nav><!-- .navbar -->
+        <a href="{% url 'home' %}" class="logo d-flex align-items-center">
+            <img src="{% static 'images/betalert_logo.png' %}" alt="Bet Alert Logo">
+        </a>
+        <nav id="navbar" class="navbar">
+            <ul class="nav-main">
+                <li><a href="#fixtures">Fixtures</a></li>
+                <li><a href="#alerts">Alerts</a></li>
+            </ul>
+            <ul class="nav-auth">
+                <li><a href="#login">Login/Register</a></li>
+            </ul>
+        </nav><!-- .navbar -->
     </div>
-  </header><!-- End Header -->
+</header><!-- End Header -->
+
+<div class="navbar" id="date-nav">
+    <ul>
+        <li><a href="{% url 'matches_by_day' 'yesterday' %}" class="{% if current_day == 'yesterday' %}active{% endif %}">Yesterday</a></li>
+        <li><a href="{% url 'home' %}" class="{% if current_day == 'today' %}active{% endif %}">Today</a></li>
+        <li><a href="{% url 'matches_by_day' 'tomorrow' %}" class="{% if current_day == 'tomorrow' %}active{% endif %}">Tomorrow</a></li>
+    </ul>
+</div>
 
 <div class="container mt-4">
-  <h1 class="mb-3">Upcoming Matches</h1>
   <table id="matchesTable" class="table table-hover">
     <thead class="thead-dark">
       <tr>
@@ -86,19 +89,12 @@
   </table>
 </div>
 
-  <!-- Footer, Scripts, and other boilerplates -->
-  <footer id="footer" class="footer">
-    <!-- Footer content -->
-  </footer>
 
-  <!-- Vendor JS Files -->
-  <script src="{% static 'assets/vendor/bootstrap/js/bootstrap.bundle.min.js' %}"></script>
-  <script src="{% static 'assets/vendor/aos/aos.js' %}"></script>
-  <script src="{% static 'assets/vendor/glightbox/js/glightbox.min.js' %}"></script>
-  <script src="{% static 'assets/vendor/swiper/swiper-bundle.min.js' %}"></script>
-  <script src="{% static 'assets/vendor/isotope-layout/isotope.pkgd.min.js' %}"></script>
-  <!-- Main JS File -->
-  <script src="{% static 'assets/js/main.js' %}"></script>
+ <!-- Vendor JS Files -->
+ <script src="{% static 'assets/vendor/bootstrap/js/bootstrap.bundle.min.js' %}"></script>
+ <script src="{% static 'assets/vendor/isotope-layout/isotope.pkgd.min.js' %}"></script>
+ <!-- Main JS File -->
+ <script src="{% static 'assets/js/main.js' %}"></script>
 
 <script>
 $(document).ready( function () {
