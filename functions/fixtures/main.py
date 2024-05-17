@@ -5,7 +5,7 @@ import logging
 import pytz
 import urllib.request
 import google.cloud.logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
 from utils import get_db_connection  # Import utility functions
 from config_loader import load_config  # Import configuration loader
 from urllib import error
@@ -21,12 +21,8 @@ config = load_config()
 def fetch_seasons_db(cursor):
     cursor.execute("""SELECT DISTINCT s.id, s.tournament_id
                     FROM  tournaments t
-                    JOIN countries c ON c.id=t.country_id
                     JOIN seasons s ON s.tournament_id=t.id 
-                    WHERE ((reputation_tier ='bottom' AND tier =99 AND user_count > 1000)
-                    OR (t.name LIKE '%Women%')
-                    OR (reputation_tier ='bottom' AND tier <=3)
-                    OR reputation_tier != 'bottom')""")
+                    """)
     return {row[0]: {"tournament_id": row[1]} for row in cursor.fetchall()}
 
 
@@ -136,7 +132,7 @@ def fixtures_main(request):
             cest = pytz.timezone('Europe/Berlin')
             # Get the current time in UTC, then convert it to CEST
             today = datetime.now(pytz.utc).astimezone(cest)
-            delta = today + timedelta(days=1)
+            delta = today + timedelta(days=3)
 
             for fixtures_data in fixtures_from_api:
                 timestamp_data = fixtures_data['startTimestamp']
