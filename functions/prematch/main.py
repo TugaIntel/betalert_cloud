@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 import time
 import logging
-import google.cloud.logging
 import pytz
 from datetime import datetime, timedelta
-from utils import get_db_connection, send_alert
+from sqlalchemy import text
+from utils import get_session, close_session, send_alert
 from config_loader import load_config
+import google.cloud.logging
 
-# Sets up Google Cloud logging with the default client.
+# Set up Google Cloud logging with the default client.
 client = google.cloud.logging.Client()
 client.setup_logging()
 
@@ -15,41 +16,50 @@ client.setup_logging()
 config = load_config()
 
 
-def fetch_pre_match_info(cursor):
-    """Fetches upcoming matches within a time window, considering time zone."""
+def fetch_pre_match_info(session):
+    """
+    Fetches upcoming matches within a time window, considering time zone.
 
+    Args:
+        session (Session): A database session object.
+
+    Returns:
+        list: A list containing match details.
+    """
     cest = pytz.timezone('Europe/Berlin')
-    # Adjust time window based on your needs (replace with desired offsets)
     offset_start = timedelta(minutes=25)
     offset_end = timedelta(minutes=100)
 
-    # Fetch current UTC time and convert to desired time zone
     now_utc = datetime.now(pytz.utc)
     now_local = now_utc.astimezone(cest)
-    # Construct the query with time window adjusted to desired time zone
     start_time = (now_local + offset_start).strftime('%Y-%m-%d %H:%M:%S')
     end_time = (now_local + offset_end).strftime('%Y-%m-%d %H:%M:%S')
 
-    query = f"""
+    query = text(f"""
         SELECT label, DATE_FORMAT(match_time, '%H:%i') AS match_time, country, tournament, 
                home, away, h_squad_k, a_squad_k, squad_ratio, score_ratio, conceded_ratio, 
                h_lineup_k, a_lineup_k, home_pos, away_pos, round_number
         FROM v_pre_match_analysis
         WHERE match_time BETWEEN '{start_time}' AND '{end_time}'
           AND label IS NOT NULL
-          AND (( tier = 99 AND user_count > 1000)
-          OR (tournament LIKE '%Women%')
-          OR (reputation_tier in ('top', 'good', 'medium')))
+          AND reputation_tier in ('top', 'good', 'medium')
         ORDER BY match_time, tournament_reputation DESC
-    """
-
-    cursor.execute(query)
-    return cursor.fetchall()
+    """)
+    result = session.execute(query)
+    return result.fetchall()
 
 
 def construct_alert_message(matches):
-    """Constructs a list of messages with each message adhering to the character limit imposed by Telegram."""
-    max_message_length = 4000  # Set close to Telegram's limit
+    """
+    Constructs a list of messages with each message adhering to the character limit imposed by Telegram.
+
+    Args:
+        matches (list): A list of match details.
+
+    Returns:
+        list: A list of alert messages.
+    """
+    max_message_length = 4000
     messages = []
     current_message = "Upcoming Matches:\n\n"
 
@@ -69,14 +79,12 @@ def construct_alert_message(matches):
                     f"Goal Ratio: {home_score_char}/{home_concede_char} vs {away_score_char}/{away_concede_char}\n"
                     f"Values: {home_value} vs {away_value} (Ratio: {squad_ratio})\n\n")
 
-        # Check if adding the next match will exceed the limit
         if len(current_message) + len(addition) > max_message_length:
             messages.append(current_message)
-            current_message = "Upcoming Matches:\n\n"  # Start a new message if limit is reached
+            current_message = "Upcoming Matches:\n\n"
 
         current_message += addition
 
-    # Append the last message if it contains any text
     if current_message:
         messages.append(current_message)
 
@@ -84,18 +92,26 @@ def construct_alert_message(matches):
 
 
 def prematch_main(request):
-    """ Main function to send pre match alerts. """
+    """
+    Main function to send pre-match alerts.
+
+    Args:
+        request (flask.Request): The request object.
+
+    Returns:
+        tuple: A response tuple containing a message and a status code.
+    """
     start_time = time.time()
     logging.info("PreMatch function execution started.")
 
-    engine = get_db_connection()
-    conn = engine.raw_connection()
-    cursor = conn.cursor()
+    db_session = get_session()
+    session = None
 
     try:
+        session = db_session()
         logging.info("Fetching pre-match information...")
 
-        pre_match_info = fetch_pre_match_info(cursor)
+        pre_match_info = fetch_pre_match_info(session)
         if pre_match_info:
             messages = construct_alert_message(pre_match_info)
             for message in messages:
@@ -105,12 +121,14 @@ def prematch_main(request):
             logging.info("No matches to alert.")
 
     except Exception as e:
-        logging.error(f"An error occurred: {e}")
+        if session:
+            session.rollback()
+        logging.error(f"An error occurred: {e}", exc_info=True)
         return f'An error occurred: {str(e)}', 500
 
     finally:
-        cursor.close()
-        conn.close()
+        if db_session:
+            close_session(db_session)
 
     logging.info(f"Total execution time: {time.time() - start_time:.4f} seconds")
     return 'Function executed successfully', 200
