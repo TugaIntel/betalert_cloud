@@ -13,9 +13,6 @@ import google.cloud.logging
 client = google.cloud.logging.Client()
 client.setup_logging()
 
-# Set logging level to debug
-logging.getLogger().setLevel(logging.DEBUG)
-
 # Load configuration settings
 config = load_config()
 
@@ -105,7 +102,7 @@ def fetch_teams_info(session, match_id):
         }
         logging.debug(f"Teams info for match ID {match_id}: {teams_info}")
         return teams_info
-    logging.error(f"No team info found for match ID {match_id}")
+    logging.debug(f"No team info found for match ID {match_id}")
     return {}
 
 

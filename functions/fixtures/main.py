@@ -141,7 +141,7 @@ def delete_matches(session):
     delete_sql = text("""
         DELETE FROM matches
         WHERE match_status IN ('canceled', 'postponed') 
-        OR (match_time < (NOW() - INTERVAL 1 DAY) AND match_status != 'finished')
+        OR (match_time < (NOW() - INTERVAL 3 DAY) AND match_status != 'finished')
     """)
     try:
         result = session.execute(delete_sql)
@@ -182,7 +182,7 @@ def fixtures_main(request):
 
             cest = pytz.timezone('Europe/Berlin')
             today = datetime.now(pytz.utc).astimezone(cest)
-            delta = today + timedelta(days=3)
+            delta = today + timedelta(days=7)
 
             for fixture_data in fixtures_from_api:
                 timestamp_data = fixture_data['startTimestamp']
