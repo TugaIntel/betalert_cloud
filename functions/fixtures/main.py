@@ -4,13 +4,15 @@ import json
 import logging
 import pytz
 import urllib.request
-import google.cloud.logging
 from datetime import datetime, timedelta
-from utils import get_db_connection  # Import utility functions
-from config_loader import load_config  # Import configuration loader
 from urllib import error
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError, IntegrityError
+from utils import get_session, close_session  # Import utility functions
+from config_loader import load_config  # Import configuration loader
+import google.cloud.logging
 
-# Sets up Google Cloud logging with the default client.
+# Set up Google Cloud logging with the default client.
 client = google.cloud.logging.Client()
 client.setup_logging()
 
@@ -18,167 +20,220 @@ client.setup_logging()
 config = load_config()
 
 
-def fetch_seasons_db(cursor):
-    cursor.execute("""SELECT DISTINCT s.id, s.tournament_id
-                    FROM  tournaments t
-                    JOIN seasons s ON s.tournament_id=t.id 
-                    """)
-    return {row[0]: {"tournament_id": row[1]} for row in cursor.fetchall()}
+def fetch_seasons_db(session):
+    """
+    Fetches all distinct season IDs and tournament IDs from the database.
+
+    Args:
+        session (Session): A database session object.
+
+    Returns:
+        dict: A dictionary mapping season IDs to their tournament IDs.
+    """
+    result = session.execute(text("""
+        SELECT DISTINCT s.id, s.tournament_id
+        FROM tournaments t
+        JOIN seasons s ON s.tournament_id = t.id
+    """))
+    return {row[0]: {"tournament_id": row[1]} for row in result.fetchall()}
 
 
-def fetch_fixtures_db(cursor):
-    cursor.execute("SELECT id, match_time, match_status FROM matches WHERE match_status!='finished'")
-    existing = {row[0]: {"match_time": row[1], "match_status": row[2]} for row in cursor.fetchall()}
+def fetch_fixtures_db(session):
+    """
+    Fetches existing fixtures that are not finished from the database.
+
+    Args:
+        session (Session): A database session object.
+
+    Returns:
+        dict: A dictionary mapping match IDs to their match time and status.
+    """
+    result = session.execute(text("""
+        SELECT id, match_time, match_status 
+        FROM matches 
+        WHERE match_status != 'finished'
+    """))
+    existing = {row[0]: {"match_time": row[1], "match_status": row[2]} for row in result.fetchall()}
     logging.debug(f"Fetched existing fixtures: {existing}")
     return existing
 
 
 def fetch_fixtures_api(tournament_id, season_id):
-    # Construct the endpoint URL using the formatted date
-    url = config['api']['base_url'] + config['api']['endpoints']['next'].format(tournament_id, season_id)
+    """
+    Fetches fixtures from the API for a given tournament and season.
 
-    # Perform the API call using urllib.request
+    Args:
+        tournament_id (int): The ID of the tournament.
+        season_id (int): The ID of the season.
+
+    Returns:
+        list: A list of fixtures fetched from the API.
+    """
+    url = config['api']['base_url'] + config['api']['endpoints']['next'].format(tournament_id, season_id)
     try:
         with urllib.request.urlopen(url) as response:
             data = response.read()
             json_data = json.loads(data)
             return json_data.get('events', [])
-    except urllib.error.URLError:
-        # Handle cases where the API call fails (e.g., log the error)
+    except urllib.error.URLError as e:
+        logging.error(f"Failed to fetch fixtures from API: {e}")
         return []
 
 
-def insert_match(cursor, conn, match_data):
-    insert_match_sql = """
-    INSERT INTO matches (id, home_team_id, away_team_id, tournament_id, round_number, 
-    match_time, home_score, away_score, match_status, season_id) 
-    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+def insert_match(session, match_data):
     """
+    Inserts a new match record into the database.
+
+    Args:
+        session (Session): A database session object.
+        match_data (dict): The match data to insert.
+    """
+    insert_match_sql = text("""
+        INSERT INTO matches (id, home_team_id, away_team_id, tournament_id, round_number, 
+        match_time, home_score, away_score, match_status, season_id) 
+        VALUES (:id, :home_team_id, :away_team_id, :tournament_id, :round_number, 
+                :match_time, :home_score, :away_score, :match_status, :season_id)
+    """)
     try:
         logging.debug(f"Attempting to insert match with data: {match_data}")
-        cursor.execute(insert_match_sql, match_data)
-        conn.commit()
-    except Exception as e:
-        # This will capture any SQL errors, such as trying to insert a duplicate key without an update fallback
-        logging.error(f"Failed to insert match: {match_data[0]}, error: {e}")
-        conn.rollback()
+        session.execute(insert_match_sql, match_data)
+        session.commit()
+    except IntegrityError as e:
+        if "1062" in str(e.orig):
+            logging.warning(f"Skipped duplicate match with ID {match_data['id']}")
+        else:
+            logging.error(f"IntegrityError while inserting match with ID {match_data['id']}: {e}")
+            raise
+    except SQLAlchemyError as e:
+        logging.error(f"An error occurred while inserting match with ID {match_data['id']}: {e}")
+        raise
 
 
-def update_match(cursor, conn, match_data):
-    update_match_sql = """
-    UPDATE matches
-    SET match_time = %s, home_score = %s, away_score = %s, match_status = %s
-    WHERE id = %s
+def update_match(session, match_data):
     """
+    Updates an existing match record in the database.
+
+    Args:
+        session (Session): A database session object.
+        match_data (dict): The match data to update.
+    """
+    update_match_sql = text("""
+        UPDATE matches
+        SET match_time = :match_time, home_score = :home_score, away_score = :away_score, match_status = :match_status
+        WHERE id = :id
+    """)
     try:
         logging.debug(f"Updating match with data: {match_data}")
-        cursor.execute(update_match_sql, match_data)
-        conn.commit()
-    except Exception as e:
-        logging.error(f"Failed to update match: {match_data[4]}, error: {e}")
-        conn.rollback()
+        session.execute(update_match_sql, match_data)
+        session.commit()
+    except SQLAlchemyError as e:
+        logging.error(f"An error occurred while updating match with ID {match_data['id']}: {e}")
+        raise
 
 
-def delete_matches(cursor, conn):
+def delete_matches(session):
     """
     Deletes obsolete matches from the database.
 
     Args:
-        cursor: Database cursor object.
-        conn: Database connection object.
+        session (Session): A database session object.
     """
-    delete_sql = """
+    delete_sql = text("""
         DELETE FROM matches
         WHERE match_status IN ('canceled', 'postponed') 
-        or (match_time < now() - interval 1 day and match_status != 'finished') 
-    """
+        OR (match_time < now() - INTERVAL '1 day' AND match_status != 'finished')
+    """)
     try:
-        cursor.execute(delete_sql)
-        deleted_count = cursor.rowcount
-        conn.commit()
+        session.execute(delete_sql)
+        deleted_count = session.rowcount
+        session.commit()
         logging.info(f"Deleted {deleted_count} matches with 'canceled' or 'postponed' status.")
-    except Exception as e:
+    except SQLAlchemyError as e:
         logging.error(f"Failed to delete matches, error: {e}")
-        conn.rollback()
+        session.rollback()
 
 
 def fixtures_main(request):
-    start_time = time.time()
+    """
+    Main function to handle fixtures data fetching and updates.
 
+    Args:
+        request (flask.Request): The request object.
+
+    Returns:
+        tuple: A response tuple containing a message and a status code.
+    """
+    start_time = time.time()
     logging.info("Fixtures function execution started.")
 
-    engine = get_db_connection()  # This is an SQLAlchemy engine now
-    conn = engine.raw_connection()  # Gets a raw connection from the engine
-    cursor = conn.cursor()
+    inserted_count = 0
+    updated_count = 0
+    db_session = get_session()
+    session = None
 
     try:
-        inserted_count = 0
-        updated_count = 0
+        session = db_session()
+        season_tournaments = fetch_seasons_db(session)
 
-        # Fetch all active season details which include season_id and tournament_id
-        season_tournaments = fetch_seasons_db(cursor)
-
-        # Loop through each season to fetch and process match data
         for season_id, details in season_tournaments.items():
             tournament_id = details['tournament_id']
-
-            # Fetch existing matches from the database for the current tournament and season
-            existing_fixtures = fetch_fixtures_db(cursor)
-
-            # Fetch new fixtures data from the API for the current date + 2 days
+            existing_fixtures = fetch_fixtures_db(session)
             fixtures_from_api = fetch_fixtures_api(tournament_id, season_id)
 
-            # Get the current time in UTC and convert to CEST
             cest = pytz.timezone('Europe/Berlin')
-            # Get the current time in UTC, then convert it to CEST
             today = datetime.now(pytz.utc).astimezone(cest)
             delta = today + timedelta(days=3)
 
-            for fixtures_data in fixtures_from_api:
-                timestamp_data = fixtures_data['startTimestamp']
+            for fixture_data in fixtures_from_api:
+                timestamp_data = fixture_data['startTimestamp']
                 utc_time_data = datetime.fromtimestamp(timestamp_data, tz=pytz.utc)
                 cest_time_data = utc_time_data.astimezone(cest)
 
                 if cest_time_data < delta:
                     formatted_time_data = cest_time_data.strftime('%Y-%m-%d %H:%M:%S')
-                    match_data = (
-                        fixtures_data['id'],
-                        fixtures_data['homeTeam']['id'],
-                        fixtures_data['awayTeam']['id'],
-                        fixtures_data['tournament']['uniqueTournament']['id'],  # Updated to reflect new JSON structure
-                        fixtures_data.get('roundInfo', {}).get('round', 0),
-                        formatted_time_data,
-                        fixtures_data.get('homeScore', {}).get('aggregated', None),  # Adjusted for new score field
-                        fixtures_data.get('awayScore', {}).get('aggregated', None),  # Adjusted for new score field
-                        fixtures_data['status']['type'],
-                        fixtures_data['season']['id']
-                    )
+                    match_data = {
+                        'id': fixture_data['id'],
+                        'home_team_id': fixture_data['homeTeam']['id'],
+                        'away_team_id': fixture_data['awayTeam']['id'],
+                        'tournament_id': fixture_data['tournament']['uniqueTournament']['id'],
+                        'round_number': fixture_data.get('roundInfo', {}).get('round', 0),
+                        'match_time': formatted_time_data,
+                        'home_score': fixture_data.get('homeScore', {}).get('aggregated', None),
+                        'away_score': fixture_data.get('awayScore', {}).get('aggregated', None),
+                        'match_status': fixture_data['status']['type'],
+                        'season_id': fixture_data['season']['id']
+                    }
 
                     logging.debug(f"Prepared match data: {match_data}")
-                    if match_data[0] not in existing_fixtures:
-                        insert_match(cursor, conn, match_data)
+                    if match_data['id'] not in existing_fixtures:
+                        insert_match(session, match_data)
                         inserted_count += 1
                     else:
-                        db_match_data = existing_fixtures[fixtures_data['id']]
+                        db_match_data = existing_fixtures[fixture_data['id']]
                         if (db_match_data['match_time'] != formatted_time_data or
-                                db_match_data['match_status'] != fixtures_data['status']['type']):
-                            update_match_data = (formatted_time_data, match_data[6], match_data[7], match_data[8],
-                                                 match_data[0])
-                            update_match(cursor, conn, update_match_data)
+                                db_match_data['match_status'] != fixture_data['status']['type']):
+                            update_match_data = {
+                                'match_time': formatted_time_data,
+                                'home_score': match_data['home_score'],
+                                'away_score': match_data['away_score'],
+                                'match_status': match_data['match_status'],
+                                'id': match_data['id']
+                            }
+                            update_match(session, update_match_data)
                             updated_count += 1
 
-        delete_matches(cursor, conn)
-
+        delete_matches(session)
         logging.info(f"Inserted {inserted_count} new fixtures, updated {updated_count} fixtures.")
         logging.info(f"Total execution time: {time.time() - start_time:.4f} seconds")
 
     except Exception as e:
-        logging.error(f"An error occurred: {e}")
+        if session:
+            session.rollback()
+        logging.error(f"An error occurred during the fixtures update process: {e}", exc_info=True)
         return f'An error occurred: {str(e)}', 500
 
     finally:
-        cursor.close()  # Ensure the cursor is closed after operations
-        conn.close()  # Ensure the connection is closed after operations
+        if db_session:
+            close_session(db_session)
 
-    logging.info(f"Total execution time: {time.time() - start_time:.4f} seconds")
     return 'Function executed successfully', 200
