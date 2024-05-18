@@ -1,14 +1,13 @@
-#!/usr/bin/env python3
-import re
-import time
 import logging
-from datetime import datetime
-import pymysql
-import google.cloud.logging
-from utils import get_db_connection, make_api_call
+from utils import get_session, close_session, make_api_call
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from config_loader import load_config
+from datetime import datetime
+import re
+import google.cloud.logging
 
-# Set up Google Cloud logging with the default client.
+# Sets up Google Cloud logging with the default client.
 client = google.cloud.logging.Client()
 client.setup_logging()
 
@@ -31,36 +30,36 @@ EXCEPTION_TIERS = {
 }
 
 
-def get_countries(cursor):
+def get_countries(session):
     """
     Fetches all country IDs from the database.
 
     Args:
-        cursor (cursor): A database cursor object.
+        session (Session): A database session object.
 
     Returns:
         list: A list of integer country IDs.
     """
-    cursor.execute("SELECT id FROM countries")
-    return [row[0] for row in cursor.fetchall()]
+    result = session.execute(text("SELECT id FROM countries"))
+    return [row[0] for row in result.fetchall()]
 
 
-def get_existing_tournaments(cursor):
+def get_existing_tournaments(session):
     """
     Fetches existing tournament data from the database and returns them as a dictionary.
 
     Args:
-        cursor (cursor): A database cursor object.
+        session (Session): A database session object.
 
     Returns:
         dict: A dictionary where keys are tournament IDs and values are dictionaries containing comprehensive
         tournament data.
     """
-    cursor.execute("""
+    result = session.execute(text("""
         SELECT id, name, tier, user_count, rounds, playoff_series, 
                perf_graph, standings_groups, start_date, end_date, country_id
         FROM tournaments
-    """)
+    """))
     return {
         row[0]: {
             "name": row[1],
@@ -73,82 +72,83 @@ def get_existing_tournaments(cursor):
             "start_date": row[8],
             "end_date": row[9],
             "country_id": row[10]
-        } for row in cursor.fetchall()
+        } for row in result.fetchall()
     }
 
 
-def insert_tournament(cursor, conn, tournament_data):
+def insert_tournament(session, tournament_data):
     """
     Inserts a new tournament record into the 'tournaments' table with all necessary fields.
 
     Args:
-        cursor (cursor): A database cursor object.
-        conn (connection): A database connection object.
-        tournament_data (tuple): All necessary tournament data.
+        session (Session): A database session object.
+        tournament_data (dict): A dictionary containing tournament data.
     """
-    insert_tournament_sql = """
+    insert_tournament_sql = text("""
         INSERT INTO tournaments (name, tier, user_count, rounds, playoff_series, perf_graph, standings_groups, 
         start_date, end_date, country_id, id) 
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-    """
+        VALUES (:name, :tier, :user_count, :rounds, :playoff_series, :perf_graph, :standings_groups, 
+                :start_date, :end_date, :country_id, :id)
+    """)
     try:
         # Convert boolean values to integers
-        tournament_data = (
-            tournament_data[0], tournament_data[1], tournament_data[2],
-            int(tournament_data[3]), int(tournament_data[4]),
-            int(tournament_data[5]), int(tournament_data[6]),
-            tournament_data[7], tournament_data[8],
-            tournament_data[9], tournament_data[10]
-        )
-        cursor.execute(insert_tournament_sql, tournament_data)
-        conn.commit()
-    except pymysql.err.IntegrityError as e:
-        if e.args[0] == 1062:
-            logging.warning(f"Skipped duplicate tournament with ID {tournament_data[-1]}")
+        tournament_data['rounds'] = int(tournament_data['rounds'])
+        tournament_data['playoff_series'] = int(tournament_data['playoff_series'])
+        tournament_data['perf_graph'] = int(tournament_data['perf_graph'])
+        tournament_data['standings_groups'] = int(tournament_data['standings_groups'])
+
+        session.execute(insert_tournament_sql, tournament_data)
+        session.commit()
+    except IntegrityError as e:
+        if "1062" in str(e.orig):
+            logging.warning(f"Skipped duplicate tournament with ID {tournament_data['id']}")
         else:
+            logging.error(f"Failed to insert tournament {tournament_data['name']} ({tournament_data['id']}): {e}")
             raise
-    except Exception as e:
-        logging.error(f"An unexpected error occurred: {e}")
+    except SQLAlchemyError as e:
+        logging.error(f"Failed to insert tournament {tournament_data['name']} ({tournament_data['id']}): {e}")
         raise
 
 
-def update_tournament(cursor, conn, tournament_data):
+def update_tournament(session, tournament_data):
     """
     Updates an existing tournament record in the 'tournaments' table with all necessary fields.
 
     Args:
-        cursor (cursor): A database cursor object.
-        conn (connection): A database connection object.
-        tournament_data (tuple): All necessary tournament data including the tournament ID at the end.
+        session (Session): A database session object.
+        tournament_data (dict): A dictionary containing tournament data including the tournament ID.
     """
-    update_tournament_sql = """
+    update_tournament_sql = text("""
         UPDATE tournaments 
-        SET name = %s, tier = %s, user_count = %s, rounds = %s, playoff_series = %s, perf_graph = %s, 
-        standings_groups = %s, start_date = %s, end_date = %s, country_id = %s
-        WHERE id = %s
-    """
+        SET name = :name, tier = :tier, user_count = :user_count, rounds = :rounds, playoff_series = :playoff_series, 
+            perf_graph = :perf_graph, standings_groups = :standings_groups, start_date = :start_date, 
+            end_date = :end_date, country_id = :country_id
+        WHERE id = :id
+    """)
     # Convert boolean values to integers
-    tournament_data = (
-        tournament_data[0], tournament_data[1], tournament_data[2],
-        int(tournament_data[3]), int(tournament_data[4]),
-        int(tournament_data[5]), int(tournament_data[6]),
-        tournament_data[7], tournament_data[8],
-        tournament_data[9], tournament_data[10]
-    )
-    cursor.execute(update_tournament_sql, tournament_data)
-    conn.commit()
+    tournament_data['rounds'] = int(tournament_data['rounds'])
+    tournament_data['playoff_series'] = int(tournament_data['playoff_series'])
+    tournament_data['perf_graph'] = int(tournament_data['perf_graph'])
+    tournament_data['standings_groups'] = int(tournament_data['standings_groups'])
+
+    try:
+        session.execute(update_tournament_sql, tournament_data)
+        session.commit()
+    except SQLAlchemyError as e:
+        logging.error(f"Failed to update tournament {tournament_data['id']}: {e}")
+        raise
 
 
-def delete_outdated_tournaments(cursor, conn):
+def delete_outdated_tournaments(session):
     """
     Deletes tournaments that have ended before the current date.
     Associated seasons are automatically deleted due to ON DELETE CASCADE.
     """
     current_date_str = datetime.now().strftime('%Y-%m-%d')
-    delete_query = "DELETE FROM tournaments WHERE end_date < %s"
-    cursor.execute(delete_query, (current_date_str,))
-    deleted_count = cursor.rowcount
-    conn.commit()
+    delete_query = text("DELETE FROM tournaments WHERE end_date < :current_date")
+    result = session.execute(delete_query, {'current_date': current_date_str})
+    deleted_count = result.rowcount
+    session.commit()
     return deleted_count
 
 
@@ -160,16 +160,11 @@ def fetch_tournaments_list(country_id):
         country_id (int): The ID of the country.
 
     Returns:
-        list: A list of tournament data.
+        dict: A dictionary containing the tournaments data.
     """
     endpoint = config['api']["endpoints"]["tournaments"].format(country_id)
     logging.debug(f"Fetching tournament list from API endpoint: {endpoint}")
-    tournaments_data = make_api_call(endpoint)
-    if tournaments_data:
-        return tournaments_data
-    else:
-        logging.info(f"No tournaments found for country ID: {country_id}")
-        return []
+    return make_api_call(endpoint)
 
 
 def fetch_tournament_details(tournament_id):
@@ -184,12 +179,7 @@ def fetch_tournament_details(tournament_id):
     """
     endpoint = config['api']["endpoints"]["tournament_detail"].format(tournament_id)
     logging.debug(f"Fetching tournament details from API endpoint: {endpoint}")
-    tournament_details = make_api_call(endpoint)
-    if tournament_details:
-        return tournament_details
-    else:
-        logging.info(f"No tournament details found for tournament ID: {tournament_id}")
-        return []
+    return make_api_call(endpoint)
 
 
 def determine_tier(tournament):
@@ -290,15 +280,14 @@ def parse_tournaments_details(json_data, current_date_str, country_id):
     return tournaments
 
 
-def check_and_update_tournament(existing_data, new_data, cursor, conn):
+def check_and_update_tournament(existing_data, new_data, session):
     """
     Compares existing tournament data with new data and updates the database if there are changes.
 
     Args:
         existing_data (dict): Existing tournament data from the database.
         new_data (dict): New tournament data to compare against.
-        cursor (cursor): A database cursor object.
-        conn (connection): A database connection object.
+        session (Session): A database session object.
     """
     fields_to_compare = ['name', 'tier', 'user_count', 'rounds', 'playoff_series', 'perf_graph', 'standings_groups',
                          'start_date', 'end_date', 'country_id']
@@ -322,19 +311,7 @@ def check_and_update_tournament(existing_data, new_data, cursor, conn):
 
     if needs_update:
         logging.debug(f"Updating tournament ID {new_data['id']}: {changed_fields}")
-        update_tournament(cursor, conn, (
-            new_data['name'],
-            new_data['tier'],
-            new_data['user_count'],
-            int(new_data['rounds']),
-            int(new_data['playoff_series']),
-            int(new_data['perf_graph']),
-            int(new_data['standings_groups']),
-            new_data['start_date'],
-            new_data['end_date'],
-            new_data['country_id'],
-            new_data['id']
-        ))
+        update_tournament(session, new_data)
 
 
 def calculate_reputation(user_count, tier):
@@ -350,7 +327,7 @@ def calculate_reputation(user_count, tier):
     """
     if user_count > 2000 and tier > 20:
         reputation = user_count * 1
-    elif tier >20:
+    elif tier > 20:
         reputation = user_count / 3
     elif 10 <= tier <= 20:
         reputation = user_count / 1.5
@@ -382,28 +359,27 @@ def tier_name(reputation):
         return 'bottom'
 
 
-def update_tournament_reputation(cursor, conn):
+def update_tournament_reputation(session):
     """
     Updates the 'reputation' and 'reputation_tier' fields for all tournaments in the database.
 
     Args:
-        cursor (cursor): A database cursor object.
-        conn (connection): A database connection object.
+        session (Session): A database session object.
     """
-    cursor.execute("SELECT id, user_count, tier FROM tournaments")
-    tournaments = cursor.fetchall()
+    result = session.execute(text("SELECT id, user_count, tier FROM tournaments"))
+    tournaments = result.fetchall()
     for tournament in tournaments:
         tournament_id, user_count, tier = tournament
         reputation = calculate_reputation(user_count, tier)
         reputation_tier = tier_name(reputation)
 
-        update_sql = """
+        update_sql = text("""
             UPDATE tournaments
-            SET reputation = %s, reputation_tier = %s
-            WHERE id = %s
-        """
-        cursor.execute(update_sql, (reputation, reputation_tier, tournament_id))
-    conn.commit()
+            SET reputation = :reputation, reputation_tier = :reputation_tier
+            WHERE id = :id
+        """)
+        session.execute(update_sql, {'reputation': reputation, 'reputation_tier': reputation_tier, 'id': tournament_id})
+    session.commit()
 
 
 def tournaments_main(request):
@@ -416,19 +392,17 @@ def tournaments_main(request):
     Returns:
         tuple: A response tuple containing a message and a status code.
     """
-    start_time = time.time()
     current_date_str = datetime.now().strftime('%Y-%m-%d')
-    logging.info("Tournaments function execution started.")
 
-    engine = get_db_connection()
-    conn = engine.raw_connection()
-    cursor = conn.cursor()
+    inserted_count = 0
+    updated_count = 0
+    db_session = get_session()
+    session = None
 
     try:
-        inserted_count = 0
-        updated_count = 0
-
-        country_ids = get_countries(cursor)
+        session = db_session()
+        country_ids = get_countries(session)
+        existing_tournaments = get_existing_tournaments(session)
 
         for country_id in country_ids:
             groups_data = fetch_tournaments_list(country_id)
@@ -439,44 +413,48 @@ def tournaments_main(request):
                             tournament_id = tournament_detail['id']
                             tournament_details = fetch_tournament_details(tournament_id)
                             parsed_data = parse_tournaments_details(tournament_details, current_date_str, country_id)
-                            existing_tournaments = get_existing_tournaments(cursor)
 
                             for tournament_parsed_detail in parsed_data:
                                 if tournament_parsed_detail['id'] in existing_tournaments:
                                     existing_data = existing_tournaments[tournament_parsed_detail['id']]
-                                    check_and_update_tournament(existing_data, tournament_parsed_detail, cursor, conn)
+                                    check_and_update_tournament(existing_data, tournament_parsed_detail, session)
                                     updated_count += 1
                                 else:
-                                    insert_tournament(cursor, conn, (
-                                        tournament_parsed_detail['name'],
-                                        tournament_parsed_detail['tier'],
-                                        tournament_parsed_detail['user_count'],
-                                        int(tournament_parsed_detail['rounds']),
-                                        int(tournament_parsed_detail['playoff_series']),
-                                        int(tournament_parsed_detail['perf_graph']),
-                                        int(tournament_parsed_detail['standings_groups']),
-                                        tournament_parsed_detail['start_date'],
-                                        tournament_parsed_detail['end_date'],
-                                        tournament_parsed_detail['country_id'],
-                                        tournament_parsed_detail['id']
-                                    ))
+                                    insert_tournament(session, {
+                                        'name': tournament_parsed_detail['name'],
+                                        'tier': tournament_parsed_detail['tier'],
+                                        'user_count': tournament_parsed_detail['user_count'],
+                                        'rounds': int(tournament_parsed_detail['rounds']),
+                                        'playoff_series': int(tournament_parsed_detail['playoff_series']),
+                                        'perf_graph': int(tournament_parsed_detail['perf_graph']),
+                                        'standings_groups': int(tournament_parsed_detail['standings_groups']),
+                                        'start_date': tournament_parsed_detail['start_date'],
+                                        'end_date': tournament_parsed_detail['end_date'],
+                                        'country_id': tournament_parsed_detail['country_id'],
+                                        'id': tournament_parsed_detail['id']
+                                    })
                                     inserted_count += 1
 
-        deleted_count = delete_outdated_tournaments(cursor, conn)
-
+        deleted_count = delete_outdated_tournaments(session)
         logging.info(
             f"{inserted_count} new tournaments inserted, {updated_count} tournaments updated, "
-            f"{deleted_count} tournaments deleted.")
+            f"{deleted_count} tournaments deleted."
+        )
 
-        update_tournament_reputation(cursor, conn)
+        update_tournament_reputation(session)
 
     except Exception as e:
-        logging.error(f"An error occurred: {e}")
+
+        if session:
+            session.rollback()
+
+        logging.error(f"An error occurred during the country update process: {e}", exc_info=True)
+
         return f'An error occurred: {str(e)}', 500
 
     finally:
-        cursor.close()
-        conn.close()
 
-    logging.info(f"Total execution time: {time.time() - start_time:.4f} seconds")
+        if db_session:
+            close_session(db_session)
+
     return 'Function executed successfully', 200
