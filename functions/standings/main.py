@@ -104,7 +104,7 @@ def insert_standings(session, standing):
         session.execute(insert_sql, standing)
         session.commit()
     except SQLAlchemyError as e:
-        logging.error(f"Error inserting standings for tournament_id: {standing['tournament_id']}, "
+        logging.warning(f"Error inserting standings for tournament_id: {standing['tournament_id']}, "
                       f"season_id: {standing['season_id']}, team_id: {standing['team_id']}. Error: {e}")
         session.rollback()
 
