@@ -32,7 +32,7 @@ def get_matches(session):
         SELECT id, home_score, away_score, match_status
         FROM matches  
         WHERE match_status IN ('inprogress', 'notstarted') 
-        AND match_time <= NOW() + INTERVAL '5 minute'
+        AND match_time <= NOW() + INTERVAL 5 minute
     """)
     result = session.execute(query)
     return {row[0]: {"home_score": row[1], "away_score": row[2], "match_status": row[3]} for row in result.fetchall()}

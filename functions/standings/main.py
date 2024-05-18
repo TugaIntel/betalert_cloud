@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 import time
 import logging
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
+from utils import get_session, close_session, make_api_call
+from config_loader import load_config
 import google.cloud.logging
-from utils import get_db_connection, make_api_call  # Import utility functions
-from config_loader import load_config  # Import configuration loader
 
-# Sets up Google Cloud logging with the default client.
+# Set up Google Cloud logging with the default client.
 client = google.cloud.logging.Client()
 client.setup_logging()
 
@@ -13,20 +15,23 @@ client.setup_logging()
 config = load_config()
 
 
-def get_recent_matches(cursor):
+def get_recent_matches(session):
     """
     Fetches distinct tournaments and seasons that have matches finished in the last 12 hours.
+
+    Args:
+        session (Session): A database session object.
 
     Returns:
         list of tuples: A list containing tuples of (tournament_id, season_id).
     """
-    query = """
+    query = text("""
         SELECT DISTINCT tournament_id, season_id
         FROM matches
-        WHERE match_status = 'finished' AND match_time >= NOW() - INTERVAL 5 HOUR
-    """
-    cursor.execute(query)
-    return cursor.fetchall()
+        WHERE match_status = 'finished' AND match_time >= NOW() - INTERVAL 5 hour
+    """)
+    result = session.execute(query)
+    return result.fetchall()
 
 
 def fetch_standings(tournament_id, season_id):
@@ -34,13 +39,13 @@ def fetch_standings(tournament_id, season_id):
     Fetches standings information for a specific tournament and season from an external API.
 
     Args:
-        tournament_id (int): The ID of the tournament to fetch fixtures for.
-        season_id (int): The ID of the season to fetch fixtures for.
+        tournament_id (int): The ID of the tournament to fetch standings for.
+        season_id (int): The ID of the season to fetch standings for.
 
     Returns:
-        A list of dictionaries containing fixture information.
+        list: A list of dictionaries containing standings information.
     """
-    endpoint = config['api']["endpoints"]["standings"].format(tournament_id, season_id)
+    endpoint = config['api']['endpoints']['standings'].format(tournament_id, season_id)
     standing_data = make_api_call(endpoint)
     return standing_data if standing_data else []
 
@@ -57,16 +62,8 @@ def parse_standings_data(standings_data, tournament_id, season_id):
     Returns:
         list of dict: A list containing dictionaries of parsed standings data.
     """
-
     parsed_standings = []
-    # If standings_data is a list directly, process it as such
-    if isinstance(standings_data, list):
-        groups = standings_data
-    # If standings_data is a dict, assume 'standings' key contains the relevant list
-    elif "standings" in standings_data:
-        groups = standings_data.get("standings", [])
-    else:
-        groups = []
+    groups = standings_data if isinstance(standings_data, list) else standings_data.get("standings", [])
 
     for group in groups:
         group_name = group.get("name", "Overall")
@@ -85,76 +82,94 @@ def parse_standings_data(standings_data, tournament_id, season_id):
                 "scored": row.get("scoresFor"),
                 "conceded": row.get("scoresAgainst"),
                 "points": row.get("points")
-                })
+            })
     return parsed_standings if parsed_standings else []
 
 
-def insert_standings(cursor, conn, tournament_id, season_id, group_name, team_id, position, played, wins,
-                     losses, draws, scored, conceded, points):
+def insert_standings(session, standing):
+    """
+    Inserts a new standings record into the database.
+
+    Args:
+        session (Session): A database session object.
+        standing (dict): The parsed standings data.
+    """
+    insert_sql = text("""
+        INSERT INTO standings (tournament_id, season_id, team_id, group_name, position, played, wins, 
+                               losses, draws, scored, conceded, points)
+        VALUES (:tournament_id, :season_id, :team_id, :group_name, :position, :played, :wins, 
+                :losses, :draws, :scored, :conceded, :points)
+    """)
     try:
-        insert_sql = """
-            INSERT INTO standings (tournament_id, season_id, team_id, group_name, position, played, wins, 
-            losses, draws, scored, conceded, points)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """
-        cursor.execute(insert_sql, (
-            tournament_id, season_id, team_id, group_name, position, played, wins, losses, draws, scored,
-            conceded, points))
-        conn.commit()
-    except Exception as e:
-        logging.error(f"Error inserting standings for tournament_id: {tournament_id}, season_id: {season_id}, "
-                      f"team_id: {team_id}. Error: {e}")
+        session.execute(insert_sql, standing)
+        session.commit()
+    except SQLAlchemyError as e:
+        logging.error(f"Error inserting standings for tournament_id: {standing['tournament_id']}, "
+                      f"season_id: {standing['season_id']}, team_id: {standing['team_id']}. Error: {e}")
+        session.rollback()
 
 
-def delete_standings(cursor, conn, tournament_id, season_id):
+def delete_standings(session, tournament_id, season_id):
+    """
+    Deletes existing standings for the given tournament and season.
+
+    Args:
+        session (Session): A database session object.
+        tournament_id (int): The ID of the tournament.
+        season_id (int): The ID of the season.
+    """
+    delete_sql = text("""
+        DELETE FROM standings 
+        WHERE tournament_id = :tournament_id AND season_id = :season_id
+    """)
     try:
-        delete_sql = """
-            DELETE FROM standings 
-            WHERE tournament_id = %s AND season_id = %s
-        """
-        cursor.execute(delete_sql, (tournament_id, season_id))
-        conn.commit()
-    except Exception as e:
-        logging.error(f"Error deleting standings for tournament_id: {tournament_id},season_id: {season_id}. Error: {e}")
+        session.execute(delete_sql, {'tournament_id': tournament_id, 'season_id': season_id})
+        session.commit()
+    except SQLAlchemyError as e:
+        logging.error(f"Error deleting standings for tournament_id: {tournament_id}, "
+                      f"season_id: {season_id}. Error: {e}")
+        session.rollback()
 
 
 def standings_main(request):
     """
     Main function to handle the standings update process.
     Fetches and updates standings for tournaments and seasons based on recent match results.
+
+    Args:
+        request (flask.Request): The request object.
+
+    Returns:
+        tuple: A response tuple containing a message and a status code.
     """
     start_time = time.time()
+    logging.info("Standings function execution started.")
 
-    logging.info("Players function execution started.")
-
-    engine = get_db_connection()  # This is an SQLAlchemy engine now
-    conn = engine.raw_connection()  # Gets a raw connection from the engine
-    cursor = conn.cursor()
+    db_session = get_session()
+    session = None
 
     try:
-
-        # Fetch recent matches to determine which standings to update
-        recent_matches = get_recent_matches(cursor)
+        session = db_session()
+        recent_matches = get_recent_matches(session)
 
         for tournament_id, season_id in recent_matches:
-            # Fetch and parse standings data from the API
             standings_data = fetch_standings(tournament_id, season_id)
             parsed_standings = parse_standings_data(standings_data, tournament_id, season_id)
 
-            # Delete existing standings for the current tournament and season
-            delete_standings(cursor, conn, tournament_id, season_id)
+            delete_standings(session, tournament_id, season_id)
 
-            # Insert new standings data
             for standing in parsed_standings:
-                insert_standings(cursor, conn, **standing)
+                insert_standings(session, standing)
 
     except Exception as e:
-        logging.error(f"An error occurred: {e}")
+        if session:
+            session.rollback()
+        logging.error(f"An error occurred: {e}", exc_info=True)
         return f'An error occurred: {str(e)}', 500
 
     finally:
-        cursor.close()  # Ensure the cursor is closed after operations
-        conn.close()  # Ensure the connection is closed after operations
+        if db_session:
+            close_session(db_session)
 
     logging.info(f"Total execution time: {time.time() - start_time:.4f} seconds")
     return 'Function executed successfully', 200
