@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-import time
 import logging
-import pymysql
-import google.cloud.logging
-from utils import get_db_connection, make_api_call
+from utils import get_session, close_session, make_api_call
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from config_loader import load_config
+import google.cloud.logging
 
 # Set up Google Cloud logging with the default client.
 client = google.cloud.logging.Client()
@@ -14,81 +14,88 @@ client.setup_logging()
 config = load_config()
 
 
-def get_tournaments(cursor):
+def get_tournaments(session):
     """
     Fetches all tournament IDs from the database.
 
     Args:
-        cursor (cursor): A database cursor object.
+        session (Session): A database session object.
 
     Returns:
         list: A list of integer tournament IDs.
     """
-    cursor.execute("SELECT id FROM tournaments")
-    return [row[0] for row in cursor.fetchall()]
+    result = session.execute(text("SELECT id FROM tournaments"))
+    return [row[0] for row in result.fetchall()]
 
 
-def get_existing_seasons(cursor):
+def get_existing_seasons(session):
     """
     Fetches existing season data from the database.
 
     Args:
-        cursor (cursor): A database cursor object.
+        session (Session): A database session object.
 
     Returns:
         dict: A dictionary mapping season IDs to a dictionary of season attributes.
     """
-    cursor.execute("""
+    result = session.execute(text("""
         SELECT id, name, year, tournament_id
         FROM seasons
-    """)
+    """))
     return {
         row[0]: {
             "name": row[1],
             "year": row[2],
             "tournament_id": row[3]
-        } for row in cursor.fetchall()
+        } for row in result.fetchall()
     }
 
 
-def insert_season(cursor, season_data):
+def insert_season(session, season_data):
     """
     Inserts a new season record into the database.
 
     Args:
-        cursor (cursor): A database cursor object.
-        season_data (tuple): The season data to insert.
+        session (Session): A database session object.
+        season_data (dict): The season data to insert.
     """
-    insert_sql = """
+    insert_sql = text("""
         INSERT INTO seasons (id, name, year, tournament_id) 
-        VALUES (%s, %s, %s, %s)
-    """
+        VALUES (:id, :name, :year, :tournament_id)
+    """)
     try:
-        cursor.execute(insert_sql, season_data)
-    except pymysql.err.IntegrityError as e:
-        if e.args[0] == 1062:  # Duplicate entry error
-            logging.warning(f"Skipped duplicate season with ID {season_data[0]}")
+        session.execute(insert_sql, season_data)
+        session.commit()
+    except IntegrityError as e:
+        if "1062" in str(e.orig):
+            logging.warning(f"Skipped duplicate season with ID {season_data['id']}")
         else:
+            logging.error(f"IntegrityError while inserting season with ID {season_data['id']}: {e}")
             raise
-    except Exception as e:
-        logging.error(f"An error occurred while inserting season: {e}")
+    except SQLAlchemyError as e:
+        logging.error(f"An error occurred while inserting season with ID {season_data['id']}: {e}")
         raise
 
 
-def update_season(cursor, season_data):
+def update_season(session, season_data):
     """
     Updates an existing season record in the database.
 
     Args:
-        cursor (cursor): A database cursor object.
-        season_data (tuple): The season data to update.
+        session (Session): A database session object.
+        season_data (dict): The season data to update.
     """
-    update_sql = """
+    update_sql = text("""
         UPDATE seasons 
-        SET name = %s, year = %s, tournament_id = %s
-        WHERE id = %s
-    """
-    cursor.execute(update_sql, season_data)
+        SET name = :name, year = :year, tournament_id = :tournament_id
+        WHERE id = :id
+    """)
+    try:
+        session.execute(update_sql, season_data)
+        session.commit()
+    except SQLAlchemyError as e:
+        logging.error(f"An error occurred while updating season with ID {season_data['id']}: {e}")
+        raise
 
 
 def fetch_seasons_list(tournament_id):
@@ -129,61 +136,64 @@ def parse_season_details(season_data, tournament_id):
 
 
 def seasons_main(request):
-    """Main function to handle season data fetching and updates."""
-    start_time = time.time()
+    """
+    Main function to handle season data fetching and updates.
+
+    Args:
+        request (flask.Request): The request object.
+
+    Returns:
+        tuple: A response tuple containing a message and a status code.
+    """
     logging.info("Seasons function execution started.")
 
-    engine = get_db_connection()
+    inserted_count = 0
+    updated_count = 0
+    db_session = get_session()
+    session = None
 
     try:
-        with engine.connect() as conn:
-            with conn.begin():
-                cursor = conn.connection.cursor()
-                # Initialize counters for inserted and updated seasons
-                inserted_count = 0
-                updated_count = 0
+        session = db_session()
+        tournament_ids = get_tournaments(session)
+        existing_seasons = get_existing_seasons(session)
 
-                # Fetch the list of tournament IDs
-                tournament_ids = get_tournaments(cursor)
+        for tournament_id in tournament_ids:
+            logging.debug(f"Processing tournament ID: {tournament_id}")
+            seasons_data = fetch_seasons_list(tournament_id)
+            latest_season = parse_season_details(seasons_data, tournament_id)
 
-                for tournament_id in tournament_ids:
-                    logging.debug(f"Processing tournament ID: {tournament_id}")
-                    # Fetch season list from API for each tournament
-                    seasons_data = fetch_seasons_list(tournament_id)
+            if latest_season:
+                season_data = {
+                    'id': latest_season['id'],
+                    'name': latest_season['name'],
+                    'year': latest_season['year'],
+                    'tournament_id': latest_season['tournament_id']
+                }
 
-                    # Parse the latest season details from the API response
-                    latest_season = parse_season_details(seasons_data, tournament_id)
+                if latest_season['id'] in existing_seasons:
+                    existing_data = existing_seasons[latest_season['id']]
+                    if (existing_data['name'] != latest_season['name'] or
+                            existing_data['year'] != latest_season['year']):
+                        update_season(session, season_data)
+                        updated_count += 1
+                else:
+                    insert_season(session, season_data)
+                    inserted_count += 1
 
-                    if latest_season:
-                        # Fetch existing seasons from the database
-                        existing_seasons = get_existing_seasons(cursor)
-
-                        # Prepare data for both insert and update operations
-                        season_data = (
-                            latest_season['id'],
-                            latest_season['name'],
-                            latest_season['year'],
-                            latest_season['tournament_id']
-                        )
-
-                        if latest_season['id'] in existing_seasons:
-                            # Existing season; update if data has changed
-                            existing_data = existing_seasons[latest_season['id']]
-                            if (existing_data['name'] != latest_season['name'] or
-                                    existing_data['year'] != latest_season['year']):
-                                update_season(cursor, (latest_season['name'], latest_season['year'],
-                                                       latest_season['tournament_id'], latest_season['id']))
-                                updated_count += 1
-                        else:
-                            # New season; insert record
-                            insert_season(cursor, season_data)
-                            inserted_count += 1
-
-                logging.info(f"{inserted_count} new seasons inserted, {updated_count} seasons updated")
+        logging.info(f"{inserted_count} new seasons inserted, {updated_count} seasons updated")
 
     except Exception as e:
-        logging.error(f"An error occurred: {e}")
+
+        if session:
+            session.rollback()
+
+        logging.error(f"An error occurred during the country update process: {e}", exc_info=True)
+
         return f'An error occurred: {str(e)}', 500
 
-    logging.info(f"Total execution time: {time.time() - start_time:.4f} seconds")
+    finally:
+
+        if db_session:
+            close_session(db_session)
+
     return 'Function executed successfully', 200
