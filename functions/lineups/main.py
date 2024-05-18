@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 import time
 import logging
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
+from utils import get_session, close_session, make_api_call
+from config_loader import load_config
 import google.cloud.logging
-from utils import get_db_connection, make_api_call  # Import utility functions
-from config_loader import load_config  # Import configuration loader
 
-
-# Sets up Google Cloud logging with the default client.
+# Set up Google Cloud logging with the default client.
 client = google.cloud.logging.Client()
 client.setup_logging()
 
@@ -14,45 +15,47 @@ client.setup_logging()
 config = load_config()
 
 
-def get_matches(cursor):
+def get_matches(session):
     """
-    Fetches matches scheduled to start within the next 6 hours that have not started yet,
-    and belong to tournaments with a reputation of 'good' or 'top'.
+    Fetches matches scheduled to start within the next 2 hours that have not started yet,
+    and belong to tournaments with a reputation of 'medium', 'good' or 'top'.
 
     Args:
-        cursor: A database cursor to execute the query.
+        session (Session): A database session object.
 
     Returns:
         list of tuples: Each tuple contains match_id, home_team_id, and away_team_id for the matches.
     """
-    query = """
-    SELECT m.id, m.home_team_id, m.away_team_id
-    FROM matches m
-    JOIN tournaments t ON m.tournament_id = t.id
-    WHERE 1=1
-    AND m.match_status = 'notstarted'
-    AND t.reputation_tier IN ('medium','good', 'top')
-    AND m.match_time < now() + interval 2 hour
-    """
-    cursor.execute(query)
-    return cursor.fetchall()
+    query = text("""
+        SELECT m.id, m.home_team_id, m.away_team_id
+        FROM matches m
+        JOIN tournaments t ON m.tournament_id = t.id
+        WHERE m.match_status = 'notstarted'
+        AND t.reputation_tier IN ('medium', 'good', 'top')
+        AND m.match_time < NOW() + INTERVAL 2 hour
+    """)
+    result = session.execute(query)
+    return result.fetchall()
 
 
-def get_player_values(cursor, player_ids):
+def get_player_values(session, player_ids):
     """
     Fetches market values for a list of player IDs.
+
     Args:
-        cursor: Database cursor object.
+        session (Session): A database session object.
         player_ids (list): List of player IDs.
+
     Returns:
         int: Sum of market values for the given player IDs.
     """
-    format_strings = ','.join(['%s'] * len(player_ids))
-    cursor.execute(f"""
+    format_strings = ','.join([':id' + str(i) for i in range(len(player_ids))])
+    query = text(f"""
         SELECT SUM(market_value) FROM players WHERE id IN ({format_strings})
-    """, tuple(player_ids))
-    result = cursor.fetchone()
-    return result[0] if result else 0
+    """)
+    params = {f'id{i}': player_id for i, player_id in enumerate(player_ids)}
+    result = session.execute(query, params)
+    return result.scalar() or 0
 
 
 def fetch_lineups(match_id):
@@ -90,8 +93,10 @@ def fetch_form(match_id):
 def parse_lineups(lineups_data):
     """
     Extracts player IDs from the API response.
+
     Args:
         lineups_data (dict): Raw lineups data from the API.
+
     Returns:
         tuple: Tuple of lists containing player IDs for home and away teams.
     """
@@ -122,27 +127,24 @@ def parse_form_data(form_data):
     home_form = ''.join(form_data.get('homeTeam', {}).get('form', []))
     away_form = ''.join(form_data.get('awayTeam', {}).get('form', []))
 
-    # Safely get the average rating or default to None if not present or empty
     home_rating = form_data.get('homeTeam', {}).get('avgRating')
     away_rating = form_data.get('awayTeam', {}).get('avgRating')
 
-    # Ensure ratings are either decimal values or None
     home_rating = float(home_rating) if home_rating and home_rating.strip() else None
     away_rating = float(away_rating) if away_rating and away_rating.strip() else None
 
     logging.debug(
         f"Parsed form data - Home Form: {home_form}, Home Rating: {home_rating}, "
         f"Away Form: {away_form}, Away Rating: {away_rating}")
-    return home_form, home_rating, home_form, away_rating
+    return home_form, home_rating, away_form, away_rating
 
 
-def update_match(cursor, conn, match_id, home_lineup, home_form, home_rating, away_lineup, away_form, away_rating):
+def update_match(session, match_id, home_lineup, home_form, home_rating, away_lineup, away_form, away_rating):
     """
     Updates the database record for a match with the lineup values, form, and average ratings for both teams.
 
     Args:
-        cursor: A database cursor to execute the update query.
-        conn: Database connection object for committing the transaction.
+        session (Session): A database session object.
         match_id (int): The unique identifier of the match.
         home_lineup (int): The total market value of the home team's lineup.
         home_form (str): The form string for the home team.
@@ -151,30 +153,52 @@ def update_match(cursor, conn, match_id, home_lineup, home_form, home_rating, aw
         away_form (str): The form string for the away team.
         away_rating (str): The average rating for the away team.
     """
-    update_sql = """
-    UPDATE matches
-    SET home_lineup = %s, home_form = %s, home_rating = %s, away_lineup = %s, away_form = %s, away_rating = %s
-    WHERE id = %s
-    """
-    logging.debug(
-        f"Updating match {match_id} with Home Lineup: {home_lineup}, Home Form: {home_form}, Home Rating: {home_rating}"
-        f", Away Lineup: {away_lineup}, Away Form: {away_form}, Away Rating: {away_rating}")
-    cursor.execute(update_sql, (home_lineup, home_form, home_rating, away_lineup, away_form, away_rating, match_id))
-    conn.commit()
+    update_sql = text("""
+        UPDATE matches
+        SET home_lineup = :home_lineup, home_form = :home_form, home_rating = :home_rating, 
+            away_lineup = :away_lineup, away_form = :away_form, away_rating = :away_rating
+        WHERE id = :match_id
+    """)
+    try:
+        logging.debug(
+            f"Updating match {match_id} with Home Lineup: {home_lineup}, Home Form: {home_form}, "
+            f"Home Rating: {home_rating}, Away Lineup: {away_lineup}, Away Form: {away_form}, "
+            f"Away Rating: {away_rating}")
+        session.execute(update_sql, {
+            'home_lineup': home_lineup,
+            'home_form': home_form,
+            'home_rating': home_rating,
+            'away_lineup': away_lineup,
+            'away_form': away_form,
+            'away_rating': away_rating,
+            'match_id': match_id
+        })
+        session.commit()
+    except SQLAlchemyError as e:
+        logging.error(f"An error occurred while updating match with ID {match_id}: {e}")
+        session.rollback()
 
 
 def lineups_main(request):
+    """
+    Main function to handle lineups data fetching and updates.
+
+    Args:
+        request (flask.Request): The request object.
+
+    Returns:
+        tuple: A response tuple containing a message and a status code.
+    """
     start_time = time.time()
+    logging.info("Lineups function execution started.")
 
-    logging.info("Fixtures function execution started.")
-
-    engine = get_db_connection()  # This is an SQLAlchemy engine now
-    conn = engine.raw_connection()  # Gets a raw connection from the engine
-    cursor = conn.cursor()
+    db_session = get_session()
+    session = None
 
     try:
+        session = db_session()
         updated_count = 0
-        matches = get_matches(cursor)
+        matches = get_matches(session)
 
         for match_id, home_team_id, away_team_id in matches:
             lineups_data = fetch_lineups(match_id)
@@ -186,8 +210,8 @@ def lineups_main(request):
 
             home_player_ids, away_player_ids = parse_lineups(lineups_data)
             if home_player_ids and away_player_ids:
-                home_lineup_value = get_player_values(cursor, home_player_ids)
-                away_lineup_value = get_player_values(cursor, away_player_ids)
+                home_lineup_value = get_player_values(session, home_player_ids)
+                away_lineup_value = get_player_values(session, away_player_ids)
             else:
                 logging.debug(f"No lineup data available for match ID {match_id}")
                 continue
@@ -199,21 +223,20 @@ def lineups_main(request):
 
             home_form, home_rating, away_form, away_rating = form_values
 
-            # Update the match with lineup and form values
-            update_match(cursor, conn, match_id, home_lineup_value, home_form, home_rating, away_lineup_value,
-                         away_form, away_rating)
+            update_match(session, match_id, home_lineup_value, home_form, home_rating, away_lineup_value, away_form, away_rating)
             updated_count += 1
 
         logging.info(f"Updated {updated_count} matches.")
         logging.info(f"Total execution time: {time.time() - start_time:.4f} seconds")
 
     except Exception as e:
-        logging.error(f"An error occurred: {e}")
+        if session:
+            session.rollback()
+        logging.error(f"An error occurred: {e}", exc_info=True)
         return f'An error occurred: {str(e)}', 500
 
     finally:
-        cursor.close()  # Ensure the cursor is closed after operations
-        conn.close()  # Ensure the connection is closed after operations
+        if db_session:
+            close_session(db_session)
 
-    logging.info(f"Total execution time: {time.time() - start_time:.4f} seconds")
     return 'Function executed successfully', 200
