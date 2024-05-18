@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 import time
 import logging
-import pymysql
-import google.cloud.logging
-from utils import get_db_connection, make_api_call  # Import utility functions
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError, IntegrityError
+from utils import get_session, close_session, make_api_call  # Import utility functions
 from config_loader import load_config  # Import configuration loader
+import google.cloud.logging
 
-# Sets up Google Cloud logging with the default client.
+# Set up Google Cloud logging with the default client.
 client = google.cloud.logging.Client()
 client.setup_logging()
 
@@ -14,45 +15,56 @@ client.setup_logging()
 config = load_config()
 
 
-def get_teams(cursor):
+def get_teams(session):
     """
-    Fetches all team IDs from the teams that had games will play in next 24h.
+    Fetches all team IDs from the teams that have games to play in the next 24 hours.
+
+    Args:
+        session (Session): A database session object.
+
     Returns:
         list of int: A list containing team IDs.
     """
-    cursor.execute("""
+    query = text("""
         SELECT DISTINCT home_team_id FROM matches 
-        WHERE match_time between NOW() AND NOW() + INTERVAL 245 MINUTE
+        WHERE match_time BETWEEN NOW() AND NOW() + INTERVAL 245 minute
         UNION 
         SELECT DISTINCT away_team_id FROM matches 
-        WHERE match_time between NOW() AND NOW() + INTERVAL 245 MINUTE
+        WHERE match_time BETWEEN NOW() AND NOW() + INTERVAL 245 minute
     """)
-    return [row[0] for row in cursor.fetchall()]
+    result = session.execute(query)
+    return [row[0] for row in result.fetchall()]
 
 
-def get_players(cursor):
+def get_players(session):
     """
     Fetches all existing players from the database.
+
+    Args:
+        session (Session): A database session object.
+
     Returns:
         dict: Existing players keyed by a tuple of (player ID, team ID).
     """
-    cursor.execute("""
+    result = session.execute(text("""
         SELECT id, name, short_name, position, market_value, team_id FROM players
-    """)
+    """))
     return {(row[0], row[5]): {  # Key by a tuple of (player_id, team_id)
         'name': row[1],
         'short_name': row[2],
         'position': row[3],
         'market_value': row[4],
         'team_id': row[5]
-    } for row in cursor.fetchall()}
+    } for row in result.fetchall()}
 
 
 def fetch_team_players(team_id):
     """
     Fetches player details for a given team from the API.
+
     Args:
         team_id (int): The ID of the team.
+
     Returns:
         list of dicts: Player details from the API.
     """
@@ -64,9 +76,11 @@ def fetch_team_players(team_id):
 def parse_player_data(player_container, team_id):
     """
     Parses player data from the API response.
+
     Args:
         player_container (dict): Container with 'player' key holding player data from the API.
         team_id (int): The ID of the team to which the player belongs.
+
     Returns:
         dict: Parsed player data suitable for database insertion or update.
     """
@@ -88,137 +102,118 @@ def parse_player_data(player_container, team_id):
     }
 
 
-def insert_player(cursor, conn, player_data):
+def insert_player(session, player_data):
     """
     Inserts a new player into the database.
+
     Args:
-        cursor: Database cursor object.
-        conn: Database connection object.
+        session (Session): A database session object.
         player_data (dict): The parsed player data.
     """
-    insert_sql = """
-            INSERT INTO players (name, short_name, position, market_value, team_id, id)
-            VALUES (%s, %s, %s, %s, %s, %s)
-        """
+    insert_sql = text("""
+        INSERT INTO players (name, short_name, position, market_value, team_id, id)
+        VALUES (:name, :short_name, :position, :market_value, :team_id, :id)
+    """)
     try:
-        cursor.execute(insert_sql, (
-            player_data['name'],
-            player_data['short_name'],
-            player_data['position'],
-            player_data['market_value'],
-            player_data['team_id'],
-            player_data['id']
-        ))
-        conn.commit()
-    except pymysql.err.IntegrityError as e:
-        if e.args[0] == 1062:  # Check if error code is for a duplicate entry
-            logging.warning(f"Skipped duplicate team with ID {player_data[-1]}")
+        logging.debug(f"Attempting to insert player with data: {player_data}")
+        session.execute(insert_sql, player_data)
+        session.commit()
+    except IntegrityError as e:
+        if "1062" in str(e.orig):
+            logging.warning(f"Skipped duplicate player with ID {player_data['id']}")
         else:
-            raise  # Re-raise the exception if it's not a duplicate entry error
-    except Exception as e:
-        logging.error(f"An unexpected error occurred: {e}")
-        raise  # Continue to propagate other types of exceptions
+            logging.error(f"IntegrityError while inserting player with ID {player_data['id']}: {e}")
+            raise
+    except SQLAlchemyError as e:
+        logging.error(f"An error occurred while inserting player with ID {player_data['id']}: {e}")
+        raise
 
 
-def update_player(cursor, conn, player_data):
+def update_player(session, player_data):
     """
     Updates an existing player in the database.
+
     Args:
-        cursor: Database cursor object.
-        conn: Database connection object.
+        session (Session): A database session object.
         player_data (dict): The parsed player data.
     """
+    update_sql = text("""
+        UPDATE players
+        SET name = :name, short_name = :short_name, position = :position, market_value = :market_value
+        WHERE id = :id AND team_id = :team_id
+    """)
     try:
-        update_sql = """
-            UPDATE players
-            SET name = %s, short_name = %s, position = %s, market_value = %s
-            WHERE id = %s AND team_id = %s
-        """
-        cursor.execute(update_sql, (
-            player_data['name'],
-            player_data['short_name'],
-            player_data['position'],
-            player_data['market_value'],
-            player_data['id'],
-            player_data['team_id']
-        ))
-        conn.commit()
-    except pymysql.err.IntegrityError as e:
-        if e.args[0] == 1062:  # Check if error code is for a duplicate entry
-            logging.warning(f"Skipped duplicate team with ID {player_data[-1]}")
-        else:
-            raise  # Re-raise the exception if it's not a duplicate entry error
-    except Exception as e:
-        logging.error(f"An unexpected error occurred: {e}")
-        raise  # Continue to propagate other types of exceptions
+        logging.debug(f"Updating player with data: {player_data}")
+        session.execute(update_sql, player_data)
+        session.commit()
+    except SQLAlchemyError as e:
+        logging.error(f"An error occurred while updating player with ID {player_data['id']}: {e}")
+        raise
 
 
 def players_main(request):
-    """ Main function to update player details in the database. """
-    start_time = time.time()
+    """
+    Main function to handle player data fetching and updates.
 
+    Args:
+        request (flask.Request): The request object.
+
+    Returns:
+        tuple: A response tuple containing a message and a status code.
+    """
+    start_time = time.time()
     logging.info("Players function execution started.")
 
-    engine = get_db_connection()  # This is an SQLAlchemy engine now
-    conn = engine.raw_connection()  # Gets a raw connection from the engine
-    cursor = conn.cursor()
+    inserted_count = 0
+    updated_count = 0
+    db_session = get_session()
+    session = None
 
     try:
-
-        inserted_count = 0
-        updated_count = 0
-
-        team_ids = get_teams(cursor)
-        existing_players = get_players(cursor)
+        session = db_session()
+        team_ids = get_teams(session)
+        existing_players = get_players(session)
 
         for team_id in team_ids:
             players_container = fetch_team_players(team_id)
             for player_container in players_container:
                 parsed_data = parse_player_data(player_container, team_id)
 
-                # Skip processing if parsed_data is None
                 if not parsed_data:
                     continue
 
-                # Extract the player ID and team ID for clarity and error-checking
                 composite_key = (parsed_data['id'], parsed_data['team_id'])
 
-                existing_data = existing_players.get(composite_key)
-                if existing_data:
-                    comparable_fields = ['name', 'short_name', 'position', 'market_value']
-                    needs_update = False
-                    for field in comparable_fields:
-                        existing_value = str(existing_data.get(field, ''))
-                        new_value = str(parsed_data.get(field, ''))
-                        if existing_value != new_value:
-                            needs_update = True
-                            logging.debug(
-                                f"Difference found for player {composite_key}: {field}, "
-                                f"DB: {existing_value}, New: {new_value}")
-                            break
-
+                if composite_key in existing_players:
+                    existing_data = existing_players[composite_key]
+                    needs_update = any(
+                        str(existing_data.get(key, '')) != str(value)
+                        for key, value in parsed_data.items() if key != 'id'
+                    )
                     if needs_update:
                         try:
-                            update_player(cursor, conn, parsed_data)
+                            update_player(session, parsed_data)
                             updated_count += 1
-                        except Exception as e:
-                            logging.error(f"Error updating player {parsed_data['id']}: {e}")
+                        except IntegrityError:
+                            logging.error(f"Error updating player {parsed_data['id']}")
                 else:
                     try:
-                        insert_player(cursor, conn, parsed_data)
+                        insert_player(session, parsed_data)
                         inserted_count += 1
-                    except Exception as e:
-                        logging.error(f"Error inserting player {parsed_data['id']}: {e}")
+                    except IntegrityError:
+                        logging.error(f"Error inserting player {parsed_data['id']}")
 
         logging.info(f"Inserted {inserted_count} new players, updated {updated_count} players.")
 
     except Exception as e:
-        logging.error(f"An error occurred: {e}")
+        if session:
+            session.rollback()
+        logging.error(f"An error occurred: {e}", exc_info=True)
         return f'An error occurred: {str(e)}', 500
 
     finally:
-        cursor.close()  # Ensure the cursor is closed after operations
-        conn.close()  # Ensure the connection is closed after operations
+        if db_session:
+            close_session(db_session)
 
     logging.info(f"Total execution time: {time.time() - start_time:.4f} seconds")
     return 'Function executed successfully', 200
