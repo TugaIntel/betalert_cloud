@@ -32,7 +32,7 @@ def get_matches(session):
         SELECT id, home_score, away_score, match_status
         FROM matches  
         WHERE match_status IN ('inprogress', 'notstarted') 
-        AND match_time <= NOW() + INTERVAL 5 minute
+        AND match_time <= NOW() + INTERVAL 125 minute
     """)
     result = session.execute(query)
     return {row[0]: {"home_score": row[1], "away_score": row[2], "match_status": row[3]} for row in result.fetchall()}
@@ -54,7 +54,7 @@ def fetch_match_results(match_id):
             data = json.loads(response.read())
             return data.get('event', {})
     except urllib.error.URLError as e:
-        logging.error(f"Failed to fetch results for match ID {match_id}: {e}")
+        logging.warning(f"Failed to fetch results for match ID {match_id}: {e}")
         return {}
 
 
