@@ -141,11 +141,11 @@ def delete_matches(session):
     delete_sql = text("""
         DELETE FROM matches
         WHERE match_status IN ('canceled', 'postponed') 
-        OR (match_time < now() - INTERVAL '1 day' AND match_status != 'finished')
+        OR (match_time < (NOW() - INTERVAL 1 DAY) AND match_status != 'finished')
     """)
     try:
-        session.execute(delete_sql)
-        deleted_count = session.rowcount
+        result = session.execute(delete_sql)
+        deleted_count = result.rowcount
         session.commit()
         logging.info(f"Deleted {deleted_count} matches with 'canceled' or 'postponed' status.")
     except SQLAlchemyError as e:
