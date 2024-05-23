@@ -160,7 +160,47 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
-betalert-417323-3cbb71519ed9.json
-/betalert/betalert/__init__.py
-/betalert/matches/__init__.py
-/betalert/matches/migrations/__init__.py
+# Python
+*.eggs/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual Environments
+.venv/
+.venv_django/
+.venv_functions/
+
+# Django
+*.sqlite3
+media/
+staticfiles/
+
+# Environment variables
+.env.*
+
+# Secrets
+*.key
+*.pem
+credentials.json
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+
+# Google Cloud
+.gcloudignore
+
+# PyCharm
+.idea/
+*.iml
+.vscode/
+
+# App
+app.yaml
+
+# Other
+node_modules/
+
