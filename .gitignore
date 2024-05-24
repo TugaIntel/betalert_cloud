@@ -204,3 +204,4 @@ app.yaml
 # Other
 node_modules/
 
+/local/
