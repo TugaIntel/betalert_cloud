@@ -10,9 +10,17 @@
   <meta content="" name="description">
   <meta content="" name="keywords">
 
-  <!-- Favicons
-  <link href="{% static 'assets/img/favicon.png' %}" rel="icon">
-  <link href="{% static 'assets/img/apple-touch-icon.png' %}" rel="apple-touch-icon"> -->
+  <!-- Favicons -->
+  <link rel="apple-touch-icon" sizes="180x180" href="{% static 'assets/img/apple-touch-icon.png' %}">
+  <link rel="icon" type="image/png" sizes="32x32" href="{% static 'assets/img/favicon-32x32.png' %}">
+  <link rel="icon" type="image/png" sizes="16x16" href="{% static 'assets/img/favicon-16x16.png' %}">
+  <link rel="manifest" href="{% static 'assets/img/site.webmanifest' %}">
+  <link rel="mask-icon" href="{% static 'assets/img/safari-pinned-tab.svg' %}" color="#5bbad5">
+  <link rel="shortcut icon" href="{% static 'assets/img/favicon.ico' %}">
+  <meta name="msapplication-TileColor" content="#da532c">
+  <meta name="msapplication-config" content="{% static 'assets/img/browserconfig.xml' %}">
+  <meta name="theme-color" content="#ffffff">
+
 
   <!-- Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -42,7 +50,7 @@
 <header id="header" class="header d-flex align-items-center">
     <div class="container-fluid container-xl d-flex align-items-center justify-content-between">
         <a href="{% url 'home' %}" class="logo d-flex align-items-center">
-            <img src="{% static 'images/betalert_logo.png' %}" alt="Bet Alert Logo">
+            <img src="{% static 'assets/img/betalert_logo.png' %}" alt="Bet Alert Logo">
         </a>
         <nav id="navbar" class="navbar">
             <ul class="nav-main">
@@ -89,12 +97,11 @@
   </table>
 </div>
 
-
- <!-- Vendor JS Files -->
- <script src="{% static 'assets/vendor/bootstrap/js/bootstrap.bundle.min.js' %}"></script>
- <script src="{% static 'assets/vendor/isotope-layout/isotope.pkgd.min.js' %}"></script>
- <!-- Main JS File -->
- <script src="{% static 'assets/js/main.js' %}"></script>
+<!-- Vendor JS Files -->
+<script src="{% static 'assets/vendor/bootstrap/js/bootstrap.bundle.min.js' %}"></script>
+<script src="{% static 'assets/vendor/isotope-layout/isotope.pkgd.min.js' %}"></script>
+<!-- Main JS File -->
+<script src="{% static 'assets/js/main.js' %}"></script>
 
 <script>
 $(document).ready( function () {
