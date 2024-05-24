@@ -92,12 +92,15 @@ def parse_player_data(player_container, team_id):
     if player_id is None or team_id is None:
         return None
 
+    market_value = player_data.get('proposedMarketValue', 0)
+    market_value_k = market_value / 1000
+
     return {
         'id': player_id,
         'name': player_data.get('name'),
         'short_name': player_data.get('shortName'),
         'position': player_data.get('position'),
-        'market_value': player_data.get('proposedMarketValue'),
+        'market_value': market_value_k,
         'team_id': team_id,
     }
 
