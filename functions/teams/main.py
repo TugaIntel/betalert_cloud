@@ -47,7 +47,7 @@ def get_teams_details(session):
         dict: A dictionary mapping team IDs to their details.
     """
     result = session.execute(text("""
-        SELECT id, name, short_name, user_count, stadium_capacity, primary_tournament_id
+        SELECT id, name, short_name, user_count, stadium_capacity, primary_tournament_id, is_national
         FROM teams
     """))
     return {
@@ -57,8 +57,23 @@ def get_teams_details(session):
             'user_count': row[3],
             'stadium_capacity': row[4],
             'primary_tournament_id': row[5],
+            'is_national': row[6],
         } for row in result.fetchall()
     }
+
+
+def get_countries(session):
+    """
+    Fetches all country IDs and their alpha2 codes from the countries table.
+
+    Args:
+        session (Session): A database session object.
+
+    Returns:
+        dict: A dictionary mapping country IDs to their alpha2 codes.
+    """
+    result = session.execute(text("SELECT id, alpha2 FROM countries")).fetchall()
+    return {row[0]: row[1] for row in result}
 
 
 def fetch_team_details(team_id):
@@ -75,12 +90,13 @@ def fetch_team_details(team_id):
     return make_api_call(endpoint)
 
 
-def parse_team_details(team_data):
+def parse_team_details(team_data, countries):
     """
-    Parses team data from the API response.
+    Parses team data from the API response and adds the is_national value.
 
     Args:
         team_data (dict): Raw team data from the API.
+        countries (dict): A dictionary mapping country IDs to their alpha2 codes.
 
     Returns:
         dict: Parsed team data suitable for database insertion or update.
@@ -88,14 +104,36 @@ def parse_team_details(team_data):
     if not team_data:
         return {}
     team = team_data.get('team', {})
-    return {
+    category = team_data.get('team', {}).get('category', {})
+    parsed_data = {
         'id': team.get('id'),
         'name': team.get('name'),
         'short_name': team.get('shortName'),
         'user_count': team.get('userCount', 0),
         'stadium_capacity': team.get('venue', {}).get('stadium', {}).get('capacity', 0),
-        'primary_tournament_id': team.get('primaryUniqueTournament', {}).get('id')
+        'primary_tournament_id': team.get('primaryUniqueTournament', {}).get('id'),
+        'country_id': category.get('id')  # Extracting country_id from the category
     }
+    parsed_data['is_national'] = determine_is_national(parsed_data.get('country_id'), countries)
+    return parsed_data
+
+
+def determine_is_national(country_id, countries):
+    """
+    Determines if a team is national based on the country_id and the fetched countries data.
+
+    Args:
+        country_id (int): The ID of the country.
+        countries (dict): A dictionary mapping country IDs to their alpha2 codes.
+
+    Returns:
+        int: 1 if the team is national, 0 otherwise.
+    """
+    if country_id is None:
+        return 0
+
+    alpha2 = countries.get(country_id)
+    return 1 if alpha2 == 'XX' else 0
 
 
 def insert_team(session, team_data):
@@ -107,8 +145,8 @@ def insert_team(session, team_data):
         team_data (dict): The parsed team data.
     """
     insert_sql = text("""
-        INSERT INTO teams (id, name, short_name, user_count, stadium_capacity, primary_tournament_id)
-        VALUES (:id, :name, :short_name, :user_count, :stadium_capacity, :primary_tournament_id)
+        INSERT INTO teams (id, name, short_name, user_count, stadium_capacity, primary_tournament_id, is_national)
+        VALUES (:id, :name, :short_name, :user_count, :stadium_capacity, :primary_tournament_id, :is_national)
     """)
     try:
         logging.debug(f"Attempting to insert team with data: {team_data}")
@@ -136,7 +174,8 @@ def update_team(session, team_data):
     update_sql = text("""
         UPDATE teams
         SET name = :name, short_name = :short_name, user_count = :user_count, 
-            stadium_capacity = :stadium_capacity, primary_tournament_id = :primary_tournament_id
+            stadium_capacity = :stadium_capacity, primary_tournament_id = :primary_tournament_id, 
+            is_national = :is_national
         WHERE id = :id
     """)
     try:
@@ -196,14 +235,14 @@ def update_team_reputation(session):
 
 def teams_main(request):
     """
-    Main function to handle team data fetching and updates.
+     Main function to handle team data fetching and updates.
 
-    Args:
-        request (flask.Request): The request object.
+     Args:
+         request (flask.Request): The request object.
 
-    Returns:
-        tuple: A response tuple containing a message and a status code.
-    """
+     Returns:
+         tuple: A response tuple containing a message and a status code.
+     """
     start_time = time.time()
     logging.info("Teams function execution started.")
 
@@ -217,16 +256,17 @@ def teams_main(request):
         session = db_session()
         team_ids = get_distinct_teams(session)
         existing_teams = get_teams_details(session)
+        countries = get_countries(session)
 
         for team_id in team_ids:
             team_data = fetch_team_details(team_id)
-            parsed_data = parse_team_details(team_data)
+            parsed_data = parse_team_details(team_data, countries)
 
             if team_id in existing_teams:
                 existing_data = existing_teams[team_id]
                 needs_update = any(
                     str(existing_data.get(key, None)) != str(value)
-                    for key, value in parsed_data.items() if key != 'id'
+                    for key, value in parsed_data.items()
                 )
                 if needs_update:
                     try:
