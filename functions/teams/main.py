@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 import time
 import logging
+import urllib.request
+import json
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
-from utils import get_session, close_session, make_api_call  # Import utility functions
+from utils import get_session, close_session  # Import utility functions
 from config_loader import load_config  # Import configuration loader
 import google.cloud.logging
+
 
 # Set up Google Cloud logging with the default client.
 client = google.cloud.logging.Client()
@@ -78,33 +81,48 @@ def get_countries(session):
 
 def fetch_team_details(team_id):
     """
-    Fetches team details from the API for a given team ID.
+    Fetches team details from the API for a given team id.
 
     Args:
-        team_id (int): The unique ID of the team.
+        team_id (int): The ID of the team.
 
     Returns:
-        dict: Team details from the API.
+        list: team details from the API.
     """
-    endpoint = config['api']['endpoints']['team'].format(team_id)
-    return make_api_call(endpoint)
+    url = config['api']['base_url'] + config['api']['endpoints']['team'].format(team_id)
+    try:
+        with urllib.request.urlopen(url) as response:
+            data = response.read()
+            json_data = json.loads(data)
+            return json_data
+    except urllib.error.URLError as e:
+        logging.error(f"Failed to fetch team from API: {e}")
+        return []
 
 
 def parse_team_details(team_data, countries):
-    """
-    Parses team data from the API response and adds the is_national value.
-
-    Args:
-        team_data (dict): Raw team data from the API.
-        countries (dict): A dictionary mapping country IDs to their alpha2 codes.
-
-    Returns:
-        dict: Parsed team data suitable for database insertion or update.
-    """
     if not team_data:
         return {}
+
     team = team_data.get('team', {})
-    category = team_data.get('team', {}).get('category', {})
+    category = team.get('category', {})
+    primary_unique_tournament_category = team.get('primaryUniqueTournament', {}).get('category', {})
+
+    # Determine is_national
+    is_national = team.get('national')
+
+    if is_national is None:
+        # Determine country_id
+        country_id = primary_unique_tournament_category.get('id')
+        if country_id is None:
+            country_id = category.get('id')
+
+        # Determine is_national based on country_id
+        is_national = determine_is_national(country_id, countries)
+    else:
+        # Determine country_id based on national flag
+        country_id = primary_unique_tournament_category.get('id') or category.get('id')
+
     parsed_data = {
         'id': team.get('id'),
         'name': team.get('name'),
@@ -112,9 +130,10 @@ def parse_team_details(team_data, countries):
         'user_count': team.get('userCount', 0),
         'stadium_capacity': team.get('venue', {}).get('stadium', {}).get('capacity', 0),
         'primary_tournament_id': team.get('primaryUniqueTournament', {}).get('id'),
-        'country_id': category.get('id')  # Extracting country_id from the category
+        'country_id': country_id,
+        'is_national': is_national
     }
-    parsed_data['is_national'] = determine_is_national(parsed_data.get('country_id'), countries)
+
     return parsed_data
 
 
@@ -235,14 +254,14 @@ def update_team_reputation(session):
 
 def teams_main(request):
     """
-     Main function to handle team data fetching and updates.
+    Main function to handle team data fetching and updates.
 
-     Args:
-         request (flask.Request): The request object.
+    Args:
+        request (flask.Request): The request object.
 
-     Returns:
-         tuple: A response tuple containing a message and a status code.
-     """
+    Returns:
+        tuple: A response tuple containing a message and a status code.
+    """
     start_time = time.time()
     logging.info("Teams function execution started.")
 
