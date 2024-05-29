@@ -110,7 +110,8 @@ def parse_team_details(team_data, countries):
 
     # Determine is_national
     is_national = team.get('national')
-
+    team_debug = team.get('name')
+    logging.error(f"Team: {team_debug} National: {is_national}")
     if is_national is None:
         # Determine country_id
         country_id = primary_unique_tournament_category.get('id')
@@ -155,41 +156,23 @@ def determine_is_national(country_id, countries):
     return 1 if alpha2 == 'XX' else 0
 
 
-def insert_team(session, team_data):
-    """
-    Inserts a new team record into the database.
-
-    Args:
-        session (Session): A database session object.
-        team_data (dict): The parsed team data.
-    """
+def insert_teams_batch(session, teams_data):
     insert_sql = text("""
         INSERT INTO teams (id, name, short_name, user_count, stadium_capacity, primary_tournament_id, is_national)
         VALUES (:id, :name, :short_name, :user_count, :stadium_capacity, :primary_tournament_id, :is_national)
     """)
     try:
-        logging.debug(f"Attempting to insert team with data: {team_data}")
-        session.execute(insert_sql, team_data)
+        session.execute(insert_sql, teams_data)
         session.commit()
     except IntegrityError as e:
-        if "1062" in str(e.orig):
-            logging.warning(f"Skipped duplicate team with ID {team_data['id']}")
-        else:
-            logging.error(f"IntegrityError while inserting team with ID {team_data['id']}: {e}")
-            raise
+        logging.error(f"IntegrityError while inserting teams batch: {e}")
+        session.rollback()
     except SQLAlchemyError as e:
-        logging.error(f"An error occurred while inserting team with ID {team_data['id']}: {e}")
-        raise
+        logging.error(f"An error occurred while inserting teams batch: {e}")
+        session.rollback()
 
 
-def update_team(session, team_data):
-    """
-    Updates an existing team record in the database.
-
-    Args:
-        session (Session): A database session object.
-        team_data (dict): The parsed team data.
-    """
+def update_teams_batch(session, teams_data):
     update_sql = text("""
         UPDATE teams
         SET name = :name, short_name = :short_name, user_count = :user_count, 
@@ -198,12 +181,11 @@ def update_team(session, team_data):
         WHERE id = :id
     """)
     try:
-        logging.debug(f"Updating team with data: {team_data}")
-        session.execute(update_sql, team_data)
+        session.execute(update_sql, teams_data)
         session.commit()
     except SQLAlchemyError as e:
-        logging.error(f"An error occurred while updating team with ID {team_data['id']}: {e}")
-        raise
+        logging.error(f"An error occurred while updating teams batch: {e}")
+        session.rollback()
 
 
 def update_squad_value(session):
@@ -214,12 +196,11 @@ def update_squad_value(session):
         session (Session): A database session object.
     """
     update_query = text("""
-        UPDATE teams
-        SET squad_value = (
-            SELECT round(SUM(market_value)/1000000,3)
-            FROM players
-            WHERE players.team_id = teams.id
-        )
+    UPDATE teams
+    SET squad_value = (SELECT ROUND(SUM(market_value) / COUNT(*), 2)
+                        FROM players
+                        WHERE players.team_id = teams.id
+                        AND players.market_value > 0 )
     """)
     try:
         session.execute(update_query)
@@ -237,12 +218,9 @@ def update_team_reputation(session):
         session (Session): A database session object.
     """
     update_query = text("""
-        UPDATE teams
-        SET reputation = (
-            user_count * 0.5 +
-            stadium_capacity * 0.3 +
-            (SELECT reputation FROM tournaments WHERE id = teams.primary_tournament_id) * 0.2
-        )
+    UPDATE teams
+    SET reputation = ( user_count * 0.5 + stadium_capacity * 0.3 +
+    COALESCE((SELECT reputation FROM tournaments WHERE id = teams.primary_tournament_id), 0) * 0.2)
     """)
     try:
         session.execute(update_query)
@@ -252,12 +230,9 @@ def update_team_reputation(session):
         session.rollback()
 
 
-def teams_main(request):
+def teams_main():
     """
     Main function to handle team data fetching and updates.
-
-    Args:
-        request (flask.Request): The request object.
 
     Returns:
         tuple: A response tuple containing a message and a status code.
@@ -277,6 +252,9 @@ def teams_main(request):
         existing_teams = get_teams_details(session)
         countries = get_countries(session)
 
+        teams_to_insert = []
+        teams_to_update = []
+
         for team_id in team_ids:
             team_data = fetch_team_details(team_id)
             parsed_data = parse_team_details(team_data, countries)
@@ -288,17 +266,27 @@ def teams_main(request):
                     for key, value in parsed_data.items()
                 )
                 if needs_update:
-                    try:
-                        update_team(session, parsed_data)
-                        updated_count += 1
-                    except IntegrityError:
-                        integrity_error_count += 1
+                    teams_to_update.append(parsed_data)
+                    if len(teams_to_update) >= 100:
+                        update_teams_batch(session, teams_to_update)
+                        updated_count += len(teams_to_update)
+                        teams_to_update.clear()
             else:
-                try:
-                    insert_team(session, parsed_data)
-                    inserted_count += 1
-                except IntegrityError:
-                    integrity_error_count += 1
+                teams_to_insert.append(parsed_data)
+                if len(teams_to_insert) >= 100:
+                    insert_teams_batch(session, teams_to_insert)
+                    inserted_count += len(teams_to_insert)
+                    teams_to_insert.clear()
+
+        # Insert any remaining teams in the batch
+        if teams_to_insert:
+            insert_teams_batch(session, teams_to_insert)
+            inserted_count += len(teams_to_insert)
+
+        # Update any remaining teams in the batch
+        if teams_to_update:
+            update_teams_batch(session, teams_to_update)
+            updated_count += len(teams_to_update)
 
         update_squad_value(session)
         update_team_reputation(session)
