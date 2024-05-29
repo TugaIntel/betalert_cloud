@@ -230,7 +230,7 @@ def update_team_reputation(session):
         session.rollback()
 
 
-def teams_main():
+def teams_main(request):
     """
     Main function to handle team data fetching and updates.
 
