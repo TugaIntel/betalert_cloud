@@ -46,8 +46,7 @@ def fetch_team_players(team_id):
             data = response.read()
             json_data = json.loads(data)
             return json_data.get('players', [])
-    except urllib.error.URLError as e:
-        logging.error(f"Failed to fetch team from API: {e}")
+    except urllib.error.URLError:
         return []
 
 
@@ -114,11 +113,14 @@ def players_main(request):
         team_ids = get_teams(session)
         logging.info(f"Number of teams to process: {len(team_ids)}")
 
-        # Delete existing players for these teams
-        delete_start_time = time.time()
-        delete_players_by_team(session, team_ids)
-        delete_duration = time.time() - delete_start_time
-        logging.info(f"Time of execution for delete operation: {delete_duration:.4f} seconds")
+        if team_ids:
+            # Delete existing players for these teams
+            delete_start_time = time.time()
+            delete_players_by_team(session, team_ids)
+            delete_duration = time.time() - delete_start_time
+            logging.info(f"Time of execution for delete operation: {delete_duration:.4f} seconds")
+        else:
+            logging.info("No teams to process. Skipping delete operation.")
 
         inserted_count = 0
         teams_with_results = 0
