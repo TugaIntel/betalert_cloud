@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 import time
 import logging
+import urllib.request
+import json
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
-from utils import get_session, close_session, make_api_call  # Import utility functions
+from utils import get_session, close_session  # Import utility functions
 from config_loader import load_config  # Import configuration loader
 import google.cloud.logging
+from urllib import error
 
 # Set up Google Cloud logging with the default client.
 client = google.cloud.logging.Client()
@@ -36,54 +39,19 @@ def get_teams(session):
     return [row[0] for row in result.fetchall()]
 
 
-def get_players(session):
-    """
-    Fetches all existing players from the database.
-
-    Args:
-        session (Session): A database session object.
-
-    Returns:
-        dict: Existing players keyed by a tuple of (player ID, team ID).
-    """
-    result = session.execute(text("""
-        SELECT id, name, short_name, position, market_value, team_id FROM players
-    """))
-    return {(row[0], row[5]): {  # Key by a tuple of (player_id, team_id)
-        'name': row[1],
-        'short_name': row[2],
-        'position': row[3],
-        'market_value': row[4],
-        'team_id': row[5]
-    } for row in result.fetchall()}
-
-
 def fetch_team_players(team_id):
-    """
-    Fetches player details for a given team from the API.
-
-    Args:
-        team_id (int): The ID of the team.
-
-    Returns:
-        list of dicts: Player details from the API.
-    """
-    endpoint = config['api']['endpoints']['players'].format(team_id)
-    response = make_api_call(endpoint)
-    return response['players'] if response else []
+    url = config['api']['base_url'] + config['api']['endpoints']['players'].format(team_id)
+    try:
+        with urllib.request.urlopen(url) as response:
+            data = response.read()
+            json_data = json.loads(data)
+            return json_data.get('players', [])
+    except urllib.error.URLError as e:
+        logging.error(f"Failed to fetch team from API: {e}")
+        return []
 
 
 def parse_player_data(player_container, team_id):
-    """
-    Parses player data from the API response.
-
-    Args:
-        player_container (dict): Container with 'player' key holding player data from the API.
-        team_id (int): The ID of the team to which the player belongs.
-
-    Returns:
-        dict: Parsed player data suitable for database insertion or update.
-    """
     player_data = player_container.get('player')
     if not player_data:
         return None
@@ -105,108 +73,80 @@ def parse_player_data(player_container, team_id):
     }
 
 
-def insert_player(session, player_data):
-    """
-    Inserts a new player into the database.
+def delete_players_by_team(session, team_ids):
+    delete_sql = text("""
+        DELETE FROM players WHERE team_id IN :team_ids
+    """)
+    try:
+        session.execute(delete_sql, {'team_ids': tuple(team_ids)})
+        session.commit()
+    except SQLAlchemyError as e:
+        logging.error(f"An error occurred while deleting players for teams {team_ids}: {e}")
+        session.rollback()
+        raise
 
-    Args:
-        session (Session): A database session object.
-        player_data (dict): The parsed player data.
-    """
+
+def insert_players_batch(session, players_data):
     insert_sql = text("""
         INSERT INTO players (name, short_name, position, market_value, team_id, id)
         VALUES (:name, :short_name, :position, :market_value, :team_id, :id)
     """)
     try:
-        logging.debug(f"Attempting to insert player with data: {player_data}")
-        session.execute(insert_sql, player_data)
+        session.execute(insert_sql, players_data)
         session.commit()
     except IntegrityError as e:
-        if "1062" in str(e.orig):
-            logging.warning(f"Skipped duplicate player with ID {player_data['id']}")
-        else:
-            logging.error(f"IntegrityError while inserting player with ID {player_data['id']}: {e}")
-            raise
+        logging.error(f"IntegrityError while inserting players batch: {e}")
+        session.rollback()
     except SQLAlchemyError as e:
-        logging.error(f"An error occurred while inserting player with ID {player_data['id']}: {e}")
-        raise
-
-
-def update_player(session, player_data):
-    """
-    Updates an existing player in the database.
-
-    Args:
-        session (Session): A database session object.
-        player_data (dict): The parsed player data.
-    """
-    update_sql = text("""
-        UPDATE players
-        SET name = :name, short_name = :short_name, position = :position, market_value = :market_value
-        WHERE id = :id AND team_id = :team_id
-    """)
-    try:
-        logging.debug(f"Updating player with data: {player_data}")
-        session.execute(update_sql, player_data)
-        session.commit()
-    except SQLAlchemyError as e:
-        logging.error(f"An error occurred while updating player with ID {player_data['id']}: {e}")
-        raise
+        logging.error(f"An error occurred while inserting players batch: {e}")
+        session.rollback()
 
 
 def players_main(request):
-    """
-    Main function to handle player data fetching and updates.
-
-    Args:
-        request (flask.Request): The request object.
-
-    Returns:
-        tuple: A response tuple containing a message and a status code.
-    """
     start_time = time.time()
     logging.info("Players function execution started.")
 
-    inserted_count = 0
-    updated_count = 0
     db_session = get_session()
     session = None
 
     try:
         session = db_session()
         team_ids = get_teams(session)
-        existing_players = get_players(session)
+        logging.info(f"Number of teams to process: {len(team_ids)}")
+
+        # Delete existing players for these teams
+        delete_start_time = time.time()
+        delete_players_by_team(session, team_ids)
+        delete_duration = time.time() - delete_start_time
+        logging.info(f"Time of execution for delete operation: {delete_duration:.4f} seconds")
+
+        inserted_count = 0
+        teams_with_results = 0
+        players_batch = []
 
         for team_id in team_ids:
             players_container = fetch_team_players(team_id)
+            if players_container:
+                teams_with_results += 1
             for player_container in players_container:
                 parsed_data = parse_player_data(player_container, team_id)
 
                 if not parsed_data:
                     continue
 
-                composite_key = (parsed_data['id'], parsed_data['team_id'])
+                players_batch.append(parsed_data)
+                if len(players_batch) >= 100:  # Insert in batches of 100
+                    insert_players_batch(session, players_batch)
+                    inserted_count += len(players_batch)
+                    players_batch.clear()
 
-                if composite_key in existing_players:
-                    existing_data = existing_players[composite_key]
-                    needs_update = any(
-                        str(existing_data.get(key, '')) != str(value)
-                        for key, value in parsed_data.items() if key != 'id'
-                    )
-                    if needs_update:
-                        try:
-                            update_player(session, parsed_data)
-                            updated_count += 1
-                        except IntegrityError:
-                            logging.error(f"Error updating player {parsed_data['id']}")
-                else:
-                    try:
-                        insert_player(session, parsed_data)
-                        inserted_count += 1
-                    except IntegrityError:
-                        logging.error(f"Error inserting player {parsed_data['id']}")
+        # Insert any remaining players in the batch
+        if players_batch:
+            insert_players_batch(session, players_batch)
+            inserted_count += len(players_batch)
 
-        logging.info(f"Inserted {inserted_count} new players, updated {updated_count} players.")
+        logging.info(f"Inserted {inserted_count} new players.")
+        logging.info(f"Number of teams with results from API call: {teams_with_results}")
 
     except Exception as e:
         if session:
@@ -218,5 +158,6 @@ def players_main(request):
         if db_session:
             close_session(db_session)
 
-    logging.info(f"Total execution time: {time.time() - start_time:.4f} seconds")
+    total_duration = time.time() - start_time
+    logging.info(f"Total execution time: {total_duration:.4f} seconds")
     return 'Function executed successfully', 200
