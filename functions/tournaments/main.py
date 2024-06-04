@@ -1,11 +1,13 @@
 import logging
+import re
+import google.cloud.logging
+import time
 from utils import get_session, close_session, make_api_call
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from config_loader import load_config
 from datetime import datetime
-import re
-import google.cloud.logging
+
 
 # Sets up Google Cloud logging with the default client.
 client = google.cloud.logging.Client()
@@ -401,6 +403,9 @@ def tournaments_main(request):
     """
     current_date_str = datetime.now().strftime('%Y-%m-%d')
 
+    start_time = time.time()
+    logging.info("Teams function execution started.")
+
     inserted_count = 0
     updated_count = 0
     db_session = get_session()
@@ -410,6 +415,9 @@ def tournaments_main(request):
         session = db_session()
         country_ids = get_countries(session)
         existing_tournaments = get_existing_tournaments(session)
+
+        tournaments_to_insert = []
+        tournaments_to_update = []
 
         for country_id in country_ids:
             groups_data = fetch_tournaments_list(country_id)
@@ -425,22 +433,31 @@ def tournaments_main(request):
                                 if tournament_parsed_detail['id'] in existing_tournaments:
                                     existing_data = existing_tournaments[tournament_parsed_detail['id']]
                                     check_and_update_tournament(existing_data, tournament_parsed_detail, session)
-                                    updated_count += 1
+                                    tournaments_to_update.append(tournament_parsed_detail)
+                                    if len(tournaments_to_update) >= 100:
+                                        for tournament_data in tournaments_to_update:
+                                            update_tournament(session, tournament_data)
+                                        updated_count += len(tournaments_to_update)
+                                        tournaments_to_update.clear()
                                 else:
-                                    insert_tournament(session, {
-                                        'name': tournament_parsed_detail['name'],
-                                        'tier': tournament_parsed_detail['tier'],
-                                        'user_count': tournament_parsed_detail['user_count'],
-                                        'rounds': int(tournament_parsed_detail['rounds']),
-                                        'playoff_series': int(tournament_parsed_detail['playoff_series']),
-                                        'perf_graph': int(tournament_parsed_detail['perf_graph']),
-                                        'standings_groups': int(tournament_parsed_detail['standings_groups']),
-                                        'start_date': tournament_parsed_detail['start_date'],
-                                        'end_date': tournament_parsed_detail['end_date'],
-                                        'country_id': tournament_parsed_detail['country_id'],
-                                        'id': tournament_parsed_detail['id']
-                                    })
-                                    inserted_count += 1
+                                    tournaments_to_insert.append(tournament_parsed_detail)
+                                    if len(tournaments_to_insert) >= 100:
+                                        for tournament_data in tournaments_to_insert:
+                                            insert_tournament(session, tournament_data)
+                                        inserted_count += len(tournaments_to_insert)
+                                        tournaments_to_insert.clear()
+
+        # Insert any remaining tournaments in the batch
+        if tournaments_to_insert:
+            for tournament_data in tournaments_to_insert:
+                insert_tournament(session, tournament_data)
+            inserted_count += len(tournaments_to_insert)
+
+        # Update any remaining tournaments in the batch
+        if tournaments_to_update:
+            for tournament_data in tournaments_to_update:
+                update_tournament(session, tournament_data)
+            updated_count += len(tournaments_to_update)
 
         deleted_count = delete_outdated_tournaments(session)
         logging.info(
@@ -451,17 +468,14 @@ def tournaments_main(request):
         update_tournament_reputation(session)
 
     except Exception as e:
-
         if session:
             session.rollback()
-
         logging.error(f"An error occurred during the country update process: {e}", exc_info=True)
-
         return f'An error occurred: {str(e)}', 500
 
     finally:
-
         if db_session:
             close_session(db_session)
 
+    logging.info(f"Total execution time: {time.time() - start_time:.4f} seconds")
     return 'Function executed successfully', 200
