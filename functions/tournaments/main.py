@@ -203,6 +203,13 @@ def determine_tier(tournament):
     if "Amateur" in country_name and gender == "M":
         return None
 
+    # Check for lowerDivisions tier if tier is not available at the top level
+    if tier is None and "lowerDivisions" in tournament:
+        for lower_div in tournament["lowerDivisions"]:
+            if lower_div.get("tier") is not None:
+                tier = lower_div.get("tier") - 1
+                break
+
     # Handle specific country and gender conditions
     special_country_ids = {1465, 1466, 1467, 1468, 1469, 1470, 1471}
     if country_id in special_country_ids:
