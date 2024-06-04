@@ -404,7 +404,7 @@ def tournaments_main(request):
     current_date_str = datetime.now().strftime('%Y-%m-%d')
 
     start_time = time.time()
-    logging.info("Teams function execution started.")
+    logging.info("Tournaments function execution started.")
 
     inserted_count = 0
     updated_count = 0

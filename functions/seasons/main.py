@@ -70,7 +70,7 @@ def insert_season(session, season_data):
         if "1062" in str(e.orig):
             logging.warning(f"Skipped duplicate season with ID {season_data['id']}")
         else:
-            logging.error(f"IntegrityError while inserting season with ID {season_data['id']}: {e}")
+            logging.warning(f"IntegrityError while inserting season with ID {season_data['id']}: {e}")
             raise
     except SQLAlchemyError as e:
         logging.error(f"An error occurred while inserting season with ID {season_data['id']}: {e}")
@@ -157,6 +157,9 @@ def seasons_main(request):
         tournament_ids = get_tournaments(session)
         existing_seasons = get_existing_seasons(session)
 
+        seasons_to_insert = []
+        seasons_to_update = []
+
         for tournament_id in tournament_ids:
             logging.debug(f"Processing tournament ID: {tournament_id}")
             seasons_data = fetch_seasons_list(tournament_id)
@@ -174,25 +177,41 @@ def seasons_main(request):
                     existing_data = existing_seasons[latest_season['id']]
                     if (existing_data['name'] != latest_season['name'] or
                             existing_data['year'] != latest_season['year']):
-                        update_season(session, season_data)
-                        updated_count += 1
+                        seasons_to_update.append(season_data)
+                        if len(seasons_to_update) >= 100:
+                            for season in seasons_to_update:
+                                update_season(session, season)
+                            updated_count += len(seasons_to_update)
+                            seasons_to_update.clear()
                 else:
-                    insert_season(session, season_data)
-                    inserted_count += 1
+                    seasons_to_insert.append(season_data)
+                    if len(seasons_to_insert) >= 100:
+                        for season in seasons_to_insert:
+                            insert_season(session, season)
+                        inserted_count += len(seasons_to_insert)
+                        seasons_to_insert.clear()
+
+        # Insert any remaining seasons in the batch
+        if seasons_to_insert:
+            for season in seasons_to_insert:
+                insert_season(session, season)
+            inserted_count += len(seasons_to_insert)
+
+        # Update any remaining seasons in the batch
+        if seasons_to_update:
+            for season in seasons_to_update:
+                update_season(session, season)
+            updated_count += len(seasons_to_update)
 
         logging.info(f"{inserted_count} new seasons inserted, {updated_count} seasons updated")
 
     except Exception as e:
-
         if session:
             session.rollback()
-
         logging.error(f"An error occurred during the country update process: {e}", exc_info=True)
-
         return f'An error occurred: {str(e)}', 500
 
     finally:
-
         if db_session:
             close_session(db_session)
 
