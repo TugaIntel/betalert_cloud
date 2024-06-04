@@ -175,6 +175,9 @@ def fixtures_main(request):
         session = db_session()
         season_tournaments = fetch_seasons_db(session)
 
+        fixtures_to_insert = []
+        fixtures_to_update = []
+
         for season_id, details in season_tournaments.items():
             tournament_id = details['tournament_id']
             existing_fixtures = fetch_fixtures_db(session)
@@ -182,7 +185,7 @@ def fixtures_main(request):
 
             cest = pytz.timezone('Europe/Berlin')
             today = datetime.now(pytz.utc).astimezone(cest)
-            delta = today + timedelta(days=7)
+            delta = today + timedelta(days=20)
 
             for fixture_data in fixtures_from_api:
                 timestamp_data = fixture_data['startTimestamp']
@@ -206,8 +209,12 @@ def fixtures_main(request):
 
                     logging.debug(f"Prepared match data: {match_data}")
                     if match_data['id'] not in existing_fixtures:
-                        insert_match(session, match_data)
-                        inserted_count += 1
+                        fixtures_to_insert.append(match_data)
+                        if len(fixtures_to_insert) >= 100:
+                            for fixture in fixtures_to_insert:
+                                insert_match(session, fixture)
+                            inserted_count += len(fixtures_to_insert)
+                            fixtures_to_insert.clear()
                     else:
                         db_match_data = existing_fixtures[fixture_data['id']]
                         if (db_match_data['match_time'] != formatted_time_data or
@@ -219,8 +226,24 @@ def fixtures_main(request):
                                 'match_status': match_data['match_status'],
                                 'id': match_data['id']
                             }
-                            update_match(session, update_match_data)
-                            updated_count += 1
+                            fixtures_to_update.append(update_match_data)
+                            if len(fixtures_to_update) >= 100:
+                                for fixture in fixtures_to_update:
+                                    update_match(session, fixture)
+                                updated_count += len(fixtures_to_update)
+                                fixtures_to_update.clear()
+
+        # Insert any remaining fixtures in the batch
+        if fixtures_to_insert:
+            for fixture in fixtures_to_insert:
+                insert_match(session, fixture)
+            inserted_count += len(fixtures_to_insert)
+
+        # Update any remaining fixtures in the batch
+        if fixtures_to_update:
+            for fixture in fixtures_to_update:
+                update_match(session, fixture)
+            updated_count += len(fixtures_to_update)
 
         delete_matches(session)
         logging.info(f"Inserted {inserted_count} new fixtures, updated {updated_count} fixtures.")
@@ -237,3 +260,4 @@ def fixtures_main(request):
             close_session(db_session)
 
     return 'Function executed successfully', 200
+

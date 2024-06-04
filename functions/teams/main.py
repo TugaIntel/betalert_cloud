@@ -111,7 +111,7 @@ def parse_team_details(team_data, countries):
     # Determine is_national
     is_national = team.get('national')
     team_debug = team.get('name')
-    logging.error(f"Team: {team_debug} National: {is_national}")
+    logging.debug(f"Team: {team_debug} National: {is_national}")
     if is_national is None:
         # Determine country_id
         country_id = primary_unique_tournament_category.get('id')
