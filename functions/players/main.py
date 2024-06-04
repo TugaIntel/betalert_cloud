@@ -30,10 +30,10 @@ def get_teams(session):
     """
     query = text("""
         SELECT DISTINCT home_team_id FROM matches 
-        WHERE match_time BETWEEN NOW() AND NOW() + INTERVAL 245 minute
+        WHERE match_time BETWEEN NOW() AND NOW() + INTERVAL 2 DAY
         UNION 
         SELECT DISTINCT away_team_id FROM matches 
-        WHERE match_time BETWEEN NOW() AND NOW() + INTERVAL 245 minute
+        WHERE match_time BETWEEN NOW() AND NOW() + INTERVAL 2 DAY
     """)
     result = session.execute(query)
     return [row[0] for row in result.fetchall()]
@@ -94,10 +94,10 @@ def insert_players_batch(session, players_data):
         session.execute(insert_sql, players_data)
         session.commit()
     except IntegrityError as e:
-        logging.error(f"IntegrityError while inserting players batch: {e}")
+        logging.debug(f"IntegrityError while inserting players batch: {e}")
         session.rollback()
     except SQLAlchemyError as e:
-        logging.error(f"An error occurred while inserting players batch: {e}")
+        logging.debug(f"An error occurred while inserting players batch: {e}")
         session.rollback()
 
 
