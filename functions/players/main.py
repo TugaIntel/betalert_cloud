@@ -101,6 +101,28 @@ def insert_players_batch(session, players_data):
         session.rollback()
 
 
+def update_squad_value(session):
+    """
+    Updates the squad value for all teams in the database.
+
+    Args:
+        session (Session): A database session object.
+    """
+    update_query = text("""
+    UPDATE teams
+    SET squad_value = (SELECT ROUND(SUM(market_value) / COUNT(*), 2)
+                        FROM players
+                        WHERE players.team_id = teams.id
+                        AND players.market_value > 0 )
+    """)
+    try:
+        session.execute(update_query)
+        session.commit()
+    except SQLAlchemyError as e:
+        logging.error(f"An error occurred while updating squad values: {e}")
+        session.rollback()
+
+
 def players_main(request):
     start_time = time.time()
     logging.info("Players function execution started.")
@@ -146,6 +168,8 @@ def players_main(request):
         if players_batch:
             insert_players_batch(session, players_batch)
             inserted_count += len(players_batch)
+
+        update_squad_value(session)
 
         logging.info(f"Inserted {inserted_count} new players.")
         logging.info(f"Number of teams with results from API call: {teams_with_results}")

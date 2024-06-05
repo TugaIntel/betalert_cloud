@@ -188,28 +188,6 @@ def update_teams_batch(session, teams_data):
         session.rollback()
 
 
-def update_squad_value(session):
-    """
-    Updates the squad value for all teams in the database.
-
-    Args:
-        session (Session): A database session object.
-    """
-    update_query = text("""
-    UPDATE teams
-    SET squad_value = (SELECT ROUND(SUM(market_value) / COUNT(*), 2)
-                        FROM players
-                        WHERE players.team_id = teams.id
-                        AND players.market_value > 0 )
-    """)
-    try:
-        session.execute(update_query)
-        session.commit()
-    except SQLAlchemyError as e:
-        logging.error(f"An error occurred while updating squad values: {e}")
-        session.rollback()
-
-
 def update_team_reputation(session):
     """
     Updates the reputation for all teams in the database.
@@ -288,7 +266,6 @@ def teams_main(request):
             update_teams_batch(session, teams_to_update)
             updated_count += len(teams_to_update)
 
-        update_squad_value(session)
         update_team_reputation(session)
 
         logging.info(f"Inserted {inserted_count} new teams, updated {updated_count} teams.")
