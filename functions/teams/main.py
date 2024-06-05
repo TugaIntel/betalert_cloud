@@ -30,10 +30,10 @@ def get_distinct_teams(session):
     """
     query = text("""
         SELECT DISTINCT home_team_id FROM matches 
-        WHERE match_time BETWEEN NOW() AND NOW() + INTERVAL 245 minute
+        WHERE match_time BETWEEN NOW() AND NOW() + INTERVAL 2 day
         UNION 
         SELECT DISTINCT away_team_id FROM matches 
-        WHERE match_time BETWEEN NOW() AND NOW() + INTERVAL 245 minute
+        WHERE match_time BETWEEN NOW() AND NOW() + INTERVAL 2 day
     """)
     result = session.execute(query)
     return [row[0] for row in result.fetchall()]
