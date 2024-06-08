@@ -7,6 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from utils import get_session, close_session  # Import utility functions
 from config_loader import load_config  # Import configuration loader
+from urllib import error
 import google.cloud.logging
 
 
@@ -198,7 +199,7 @@ def update_team_reputation(session):
     update_query = text("""
     UPDATE teams
     SET reputation = ( user_count * 0.5 + stadium_capacity * 0.3 +
-    COALESCE((SELECT reputation FROM tournaments WHERE id = teams.primary_tournament_id), 0) * 0.2)
+    COALESCE((SELECT reputation FROM tournaments WHERE id = teams.primary_tournament_id), 10000) * 0.2)
     """)
     try:
         session.execute(update_query)
