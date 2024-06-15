@@ -16,21 +16,6 @@ client.setup_logging()
 # Load configuration settings
 config = load_config()
 
-EXCEPTION_TIERS = {
-    29: 19,  # Norway, NM Cup
-    135: 2,  # Austria, 2. Liga
-    212: 2,  # Slovenia, PrvaLiga
-    247: 2,  # Bulgaria, Parva Liga
-    3085: 1,  # Japan, Nadeshiko League, Div. 1, Women
-    10609: 1,  # Greece, Super League, Women
-    11417: 4,  # Turkey, TFF 3. Lig, Grup 1
-    17138: None,
-    19293: None,
-    20360: None,
-    21261: None,
-    22327: None
-}
-
 
 def get_countries(session):
     """
@@ -184,6 +169,31 @@ def fetch_tournament_details(tournament_id):
     return make_api_call(endpoint)
 
 
+def get_forced_tier(tournament_id):
+    """
+    Returns the forced tier for a given tournament ID if defined in FORCED_TIERS.
+
+    Args:
+        tournament_id (int): The ID of the tournament.
+
+    Returns:
+        int or None: The forced tier if defined, otherwise None.
+    """
+    forced_tiers = {
+        None: [17138, 19293, 20360, 21261, 22327],
+        1: [3085, 10609, 16601],
+        2: [135, 212, 247, 777],
+        3: [11085],
+        4: [11417],
+        19: [29]
+    }
+
+    for tier, ids in forced_tiers.items():
+        if tournament_id in ids:
+            return tier
+    return None
+
+
 def determine_tier(tournament):
     """
     Determines the tier of a tournament based on various rules and exceptions.
@@ -200,6 +210,11 @@ def determine_tier(tournament):
     country_id = tournament.get("category", {}).get("country", {}).get("id", None)
     country_name = tournament.get("category", {}).get("name", "")
     tournament_name = tournament.get("name", "")
+
+    # Check for forced tier
+    forced_tier = get_forced_tier(tournament_id)
+    if forced_tier is not None:
+        return forced_tier
 
     # Skip the record if the category contains "Amateur" and the gender is "M"
     if "Amateur" in country_name and gender == "M":
@@ -220,17 +235,10 @@ def determine_tier(tournament):
         elif gender == "F":
             return 10
 
-    # Check for known exceptions
-    if tournament_id in EXCEPTION_TIERS:
-        corrected_tier = EXCEPTION_TIERS[tournament_id]
-        if corrected_tier is None:
-            return None
-        return corrected_tier
-
     if tier is not None and 1 <= tier <= 5:
         return tier
     if tier == 0:
-        return 11 if gender == "F" else 21
+        return 11 if gender is "F" else 21
 
     if tier is None:
         if re.search(r'\b(U20|U21|U23)\b', tournament_name):
@@ -239,7 +247,7 @@ def determine_tier(tournament):
             return 3
         if re.search(r'\b(U16|U17)\b', tournament_name):
             return None
-        return 12 if gender == "F" else 22
+        return 12 if gender is "F" else 22
 
     return 99
 
