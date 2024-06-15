@@ -74,7 +74,7 @@ def fetch_teams_info(session, match_id):
     query = text("""
         SELECT minutes, country, tournament, home, away, home_score, away_score, home_pos, away_pos,
                score_ratio, conceded_ratio, h_squad_k, a_squad_k, squad_ratio, h_lineup_k, a_squad_k
-        FROM v_matches_live WHERE match_id = :match_id
+        FROM v_matches_live WHERE match_id = :match_id  AND reputation_tier NOT IN ('low', 'bottom')
     """)
     result = session.execute(query, {'match_id': match_id}).fetchone()
     if result:
